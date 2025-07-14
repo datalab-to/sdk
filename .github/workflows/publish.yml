@@ -1,0 +1,39 @@
+name: Publish python package
+on:
+  push:
+    tags:
+      - "v*.*.*"
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.11
+      - name: Install python dependencies
+        run: |
+          pip install uv
+          uv sync --group dev
+      - name: Build package
+        run: |
+          uv build
+      - name: Extract version from pyproject.toml
+        id: version
+        run: |
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('python/pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=v$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Validate tag matches version
+        run: |
+          if [ "${{ github.ref_name }}" != "${{ steps.version.outputs.version }}" ]; then
+            echo "Tag ${{ github.ref_name }} doesn't match pyproject.toml version ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+      - name: Publish package
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          cd python
+          uv publish --token "$PYPI_TOKEN"
