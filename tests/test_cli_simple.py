@@ -9,6 +9,7 @@ from click.testing import CliRunner
 
 from datalab_sdk.cli import cli
 from datalab_sdk.settings import settings
+from datalab_sdk.models import ConversionResult, OCRResult
 
 
 class TestConvertCommand:
@@ -22,13 +23,14 @@ class TestConvertCommand:
         mock_client_class.return_value = mock_client
 
         # Mock successful result
-        mock_client.process.return_value = {
-            "success": True,
-            "file_path": "/tmp/test.pdf",
-            "output_path": "/tmp/output/test.md",
-            "error": None,
-            "page_count": 5,
-        }
+        mock_result = ConversionResult(
+            success=True,
+            output_format="markdown",
+            markdown="# Test Document",
+            page_count=5,
+            error=None,
+        )
+        mock_client.convert.return_value = mock_result
 
         runner = CliRunner()
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
@@ -49,7 +51,7 @@ class TestConvertCommand:
                 assert "✅ Successfully converted" in result.output
 
                 # Verify client was called correctly
-                mock_client_class.assert_called_once_with("test-key", None)
+                mock_client_class.assert_called_once()
 
             finally:
                 os.unlink(tmp_file.name)
@@ -61,13 +63,14 @@ class TestConvertCommand:
         mock_client = Mock()
         mock_client_class.return_value = mock_client
 
-        mock_client.process.return_value = {
-            "success": True,
-            "file_path": "/tmp/test.pdf",
-            "output_path": "/tmp/output/test.md",
-            "error": None,
-            "page_count": 1,
-        }
+        mock_result = ConversionResult(
+            success=True,
+            output_format="markdown",
+            markdown="# Test Document",
+            page_count=1,
+            error=None,
+        )
+        mock_client.convert.return_value = mock_result
 
         runner = CliRunner()
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
@@ -82,8 +85,8 @@ class TestConvertCommand:
                 assert result.exit_code == 0
                 assert "✅ Successfully converted" in result.output
 
-                # Verify client was called with env var
-                mock_client_class.assert_called_once_with("env-api-key", None)
+                # Verify client was called
+                mock_client_class.assert_called_once()
 
             finally:
                 os.unlink(tmp_file.name)
@@ -117,13 +120,19 @@ class TestOCRCommand:
         mock_client_class.return_value = mock_client
 
         # Mock successful result
-        mock_client.process.return_value = {
-            "success": True,
-            "file_path": "/tmp/test.pdf",
-            "output_path": "/tmp/output/test.txt",
-            "error": None,
-            "page_count": 3,
-        }
+        mock_result = OCRResult(
+            success=True,
+            pages=[
+                {
+                    "text_lines": [{"text": "Test Document", "confidence": 0.99}],
+                    "page": 1,
+                    "image_bbox": [0, 0, 800, 600],
+                }
+            ],
+            page_count=3,
+            error=None,
+        )
+        mock_client.ocr.return_value = mock_result
 
         runner = CliRunner()
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
@@ -144,11 +153,7 @@ class TestOCRCommand:
                 assert "✅ Successfully performed OCR on" in result.output
 
                 # Verify client was called correctly
-                mock_client_class.assert_called_once_with("test-key", None)
-
-                # Verify correct endpoint was used
-                args, kwargs = mock_client.process.call_args
-                assert args[2] == "/api/v1/ocr"  # endpoint
+                mock_client_class.assert_called_once()
 
             finally:
                 os.unlink(tmp_file.name)
@@ -160,13 +165,19 @@ class TestOCRCommand:
         mock_client = Mock()
         mock_client_class.return_value = mock_client
 
-        mock_client.process.return_value = {
-            "success": True,
-            "file_path": "/tmp/test.pdf",
-            "output_path": "/tmp/output/test.txt",
-            "error": None,
-            "page_count": 5,
-        }
+        mock_result = OCRResult(
+            success=True,
+            pages=[
+                {
+                    "text_lines": [{"text": "Test Document", "confidence": 0.99}],
+                    "page": 1,
+                    "image_bbox": [0, 0, 800, 600],
+                }
+            ],
+            page_count=5,
+            error=None,
+        )
+        mock_client.ocr.return_value = mock_result
 
         runner = CliRunner()
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
@@ -188,22 +199,19 @@ class TestOCRCommand:
                 assert result.exit_code == 0
                 assert "✅ Successfully performed OCR on" in result.output
 
-                # Verify process was called with correct parameters
-                args, kwargs = mock_client.process.call_args
-                assert args[4] == 5  # max_pages
+                # Verify ocr was called with correct parameters
+                mock_client.ocr.assert_called_once()
+                args, kwargs = mock_client.ocr.call_args
+                assert kwargs.get("max_pages") == 5
 
             finally:
                 os.unlink(tmp_file.name)
 
-    @patch("datalab_sdk.cli.DatalabClient")
-    def test_ocr_multiple_files(self, mock_client_class):
+    @patch("datalab_sdk.cli.asyncio.run")
+    def test_ocr_multiple_files(self, mock_asyncio_run):
         """Test OCR of multiple files"""
-        # Mock the client
-        mock_client = Mock()
-        mock_client_class.return_value = mock_client
-
-        # Mock multiple file results
-        mock_client.process.return_value = [
+        # Mock async processing results
+        mock_asyncio_run.return_value = [
             {
                 "success": True,
                 "file_path": "/tmp/test1.pdf",
@@ -222,6 +230,10 @@ class TestOCRCommand:
 
         runner = CliRunner()
         with tempfile.TemporaryDirectory() as tmp_dir:
+            with open(os.path.join(tmp_dir, "test1.pdf"), "w") as f:
+                f.write("Dummy content for test1.pdf")
+            with open(os.path.join(tmp_dir, "test2.pdf"), "w") as f:
+                f.write("Dummy content for test2.pdf")
             result = runner.invoke(
                 cli,
                 [

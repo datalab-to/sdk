@@ -87,7 +87,7 @@ class ConversionResult:
 
         # Save images if present
         if save_images and self.images:
-            images_dir = output_path.parent / f"{output_path.stem}_images"
+            images_dir = output_path.parent
             images_dir.mkdir(exist_ok=True)
 
             for filename, base64_data in self.images.items():

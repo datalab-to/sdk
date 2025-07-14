@@ -13,6 +13,7 @@ from datalab_sdk.exceptions import (
     DatalabTimeoutError,
     DatalabFileError,
 )
+from datalab_sdk.mimetypes import MIMETYPE_MAP
 from datalab_sdk.models import ConversionResult, OCRResult, ProcessingOptions
 from datalab_sdk.settings import settings
 
@@ -140,24 +141,7 @@ class AsyncDatalabClient:
         if not mime_type:
             # Try to detect from extension
             extension = file_path.suffix.lower()
-            mime_map = {
-                ".pdf": "application/pdf",
-                ".png": "image/png",
-                ".jpg": "image/jpeg",
-                ".jpeg": "image/jpeg",
-                ".gif": "image/gif",
-                ".tiff": "image/tiff",
-                ".webp": "image/webp",
-                ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                ".doc": "application/msword",
-                ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                ".xls": "application/vnd.ms-excel",
-                ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                ".ppt": "application/vnd.ms-powerpoint",
-                ".html": "text/html",
-                ".epub": "application/epub+zip",
-            }
-            mime_type = mime_map.get(extension, "application/octet-stream")
+            mime_type = MIMETYPE_MAP.get(extension, "application/octet-stream")
 
         return file_path.name, file_path.read_bytes(), mime_type
 
