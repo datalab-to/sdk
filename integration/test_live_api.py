@@ -9,6 +9,7 @@ Set environment variables:
 - DATALAB_BASE_URL: Optional, defaults to https://www.datalab.to
 """
 
+import json
 import pytest
 import os
 from pathlib import Path
@@ -93,7 +94,8 @@ class TestOCRIntegration:
         pdf_file = DATA_DIR / "thinkpython.pdf"
 
         # OCR with limited pages
-        result = client.ocr(pdf_file, max_pages=1)
+        options = ProcessingOptions(max_pages=1)
+        result = client.ocr(pdf_file, options)
 
         # Verify result
         assert isinstance(result, OCRResult)
@@ -147,7 +149,8 @@ class TestOCRIntegration:
             pdf_file = DATA_DIR / "adversarial.pdf"
 
             # OCR with limited pages
-            result = await client.ocr(pdf_file, max_pages=2)
+            options = ProcessingOptions(max_pages=2)
+            result = await client.ocr(pdf_file, options)
 
             # Verify result
             assert isinstance(result, OCRResult)
@@ -255,10 +258,7 @@ class TestSaveOutput:
         # Check text content
         saved_text = (output_path.with_suffix(".txt")).read_text()
         assert len(saved_text) > 0
-        assert saved_text == result.get_text()
-
-        # Check JSON content
-        import json
+        assert saved_text == json.dumps(result.pages, indent=2)
 
         saved_json = json.loads((output_path.with_suffix(".ocr.json")).read_text())
         assert saved_json["success"] is True

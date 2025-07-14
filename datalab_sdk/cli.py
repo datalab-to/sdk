@@ -11,30 +11,76 @@ from typing import Optional, List
 import click
 
 from datalab_sdk.client import DatalabClient, AsyncDatalabClient
+from datalab_sdk.mimetypes import SUPPORTED_EXTENSIONS
 from datalab_sdk.models import ProcessingOptions
 from datalab_sdk.exceptions import DatalabError
 from datalab_sdk.settings import settings
 
 
-def get_supported_extensions() -> List[str]:
-    """Get list of supported file extensions"""
-    return [
-        ".pdf",
-        ".png",
-        ".jpg",
-        ".jpeg",
-        ".gif",
-        ".tiff",
-        ".webp",
-        ".docx",
-        ".doc",
-        ".xlsx",
-        ".xls",
-        ".pptx",
-        ".ppt",
-        ".html",
-        ".epub",
-    ]
+# Common CLI options
+def common_options(func):
+    """Common options for all commands"""
+    func = click.option("--api_key", required=False, help="Datalab API key")(func)
+    func = click.option(
+        "--output_dir", "-o", required=False, type=click.Path(), help="Output directory"
+    )(func)
+    func = click.option(
+        "--max_pages", type=int, help="Maximum number of pages to process"
+    )(func)
+    func = click.option(
+        "--extensions", help="Comma-separated list of file extensions (for directories)"
+    )(func)
+    func = click.option(
+        "--max_concurrent", default=5, type=int, help="Maximum concurrent requests"
+    )(func)
+    func = click.option(
+        "--base_url", default=settings.DATALAB_HOST, help="API base URL"
+    )(func)
+    func = click.option(
+        "--page_range", help='Page range to process (e.g., "0-2" or "0,1,2")'
+    )(func)
+    func = click.option("--skip_cache", help="Skip the cache when running inference")(
+        func
+    )
+    return func
+
+
+def marker_options(func):
+    """Options specific to marker/convert command"""
+    func = click.option(
+        "--format",
+        "output_format",
+        default="markdown",
+        type=click.Choice(["markdown", "html", "json"]),
+        help="Output format",
+    )(func)
+    func = click.option("--force_ocr", is_flag=True, help="Force OCR on every page")(
+        func
+    )
+    func = click.option(
+        "--format_lines", is_flag=True, help="Partially OCR lines for better formatting"
+    )(func)
+    func = click.option(
+        "--paginate", is_flag=True, help="Add page delimiters to output"
+    )(func)
+    func = click.option("--use_llm", is_flag=True, help="Use LLM to enhance accuracy")(
+        func
+    )
+    func = click.option(
+        "--strip_existing_ocr",
+        is_flag=True,
+        help="Remove existing OCR text and redo OCR",
+    )(func)
+    func = click.option(
+        "--disable_image_extraction", is_flag=True, help="Disable extraction of images"
+    )(func)
+    func = click.option(
+        "--block_correction_prompt", help="Custom prompt for block correction"
+    )(func)
+    func = click.option(
+        "--page_schema", help="Schema to set to do structured extraction"
+    )(func)
+    return func
 
 
 def find_files_in_directory(
@@ -42,7 +88,7 @@ def find_files_in_directory(
 ) -> List[Path]:
     """Find all supported files in a directory"""
     if extensions is None:
-        extensions = get_supported_extensions()
+        extensions = SUPPORTED_EXTENSIONS
 
     files = []
     for file_path in directory.rglob("*"):
@@ -108,7 +154,7 @@ def process_single_file_sync(
     output_dir: Path,
     method: str,
     options: Optional[ProcessingOptions] = None,
-    max_pages: Optional[int] = None,
+    **kwargs,
 ) -> dict:
     """Process a single file synchronously"""
     try:
@@ -116,11 +162,11 @@ def process_single_file_sync(
         output_path = output_dir / file_path.stem
         output_file = output_path / file_path.stem
 
-        client = DatalabClient()
+        client = DatalabClient(**kwargs)
         if method == "convert":
             result = client.convert(file_path, options=options, save_output=output_file)
         else:  # method == 'ocr'
-            result = client.ocr(file_path, max_pages=max_pages, save_output=output_file)
+            result = client.ocr(file_path, options=options, save_output=output_file)
 
         return {
             "file_path": str(file_path),
@@ -148,46 +194,27 @@ def cli():
 
 @click.command()
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--api_key", required=False, help="Datalab API key")
-@click.option(
-    "--output_dir", "-o", required=False, type=click.Path(), help="Output directory"
-)
-@click.option(
-    "--format",
-    "output_format",
-    default="markdown",
-    type=click.Choice(["markdown", "html", "json"]),
-    help="Output format",
-)
-@click.option("--max_pages", type=int, help="Maximum number of pages to process")
-@click.option("--force_ocr", is_flag=True, help="Force OCR on every page")
-@click.option(
-    "--format_lines", is_flag=True, help="Partially OCR lines for better formatting"
-)
-@click.option("--paginate", is_flag=True, help="Add page delimiters to output")
-@click.option("--use_llm", is_flag=True, help="Use LLM to enhance accuracy")
-@click.option("--page_range", help='Page range to process (e.g., "0-2" or "0,1,2")')
-@click.option(
-    "--extensions", help="Comma-separated list of file extensions (for directories)"
-)
-@click.option(
-    "--max_concurrent", default=5, type=int, help="Maximum concurrent requests"
-)
-@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+@common_options
+@marker_options
 def convert(
     path: str,
     api_key: str,
     output_dir: str,
-    output_format: str,
     max_pages: Optional[int],
+    extensions: Optional[str],
+    max_concurrent: int,
+    base_url: str,
+    page_range: Optional[str],
+    skip_cache: bool,
+    output_format: str,
     force_ocr: bool,
     format_lines: bool,
     paginate: bool,
     use_llm: bool,
-    page_range: Optional[str],
-    extensions: Optional[str],
-    max_concurrent: int,
-    base_url: str,
+    strip_existing_ocr: bool,
+    disable_image_extraction: bool,
+    block_correction_prompt: Optional[str],
+    page_schema: Optional[str],
 ):
     """Convert documents to markdown, HTML, or JSON"""
 
@@ -222,21 +249,24 @@ def convert(
         format_lines=format_lines,
         paginate=paginate,
         use_llm=use_llm,
+        strip_existing_ocr=strip_existing_ocr,
+        disable_image_extraction=disable_image_extraction,
         page_range=page_range,
+        block_correction_prompt=block_correction_prompt,
+        skip_cache=skip_cache,
+        page_schema=page_schema,
     )
 
     try:
-        # Set API key and base URL in client
-        settings.DATALAB_API_KEY = api_key
-        settings.DATALAB_HOST = base_url
-
         if path.is_file():
             # Single file processing
             if file_extensions and path.suffix.lower() not in file_extensions:
                 click.echo(f"❌ Skipping {path}: unsupported file type", err=True)
                 sys.exit(1)
 
-            result = process_single_file_sync(path, output_dir, "convert", options)
+            result = process_single_file_sync(
+                path, output_dir, "convert", options, api_key=api_key, base_url=base_url
+            )
 
             if result["success"]:
                 click.echo(f"✅ Successfully converted {result['file_path']}")
@@ -291,18 +321,7 @@ def convert(
 
 @click.command()
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--api_key", required=False, help="Datalab API key")
-@click.option(
-    "--output_dir", "-o", required=False, type=click.Path(), help="Output directory"
-)
-@click.option("--max_pages", type=int, help="Maximum number of pages to process")
-@click.option(
-    "--extensions", help="Comma-separated list of file extensions (for directories)"
-)
-@click.option(
-    "--max_concurrent", default=5, type=int, help="Maximum concurrent requests"
-)
-@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+@common_options
 def ocr(
     path: str,
     api_key: str,
@@ -311,6 +330,8 @@ def ocr(
     extensions: Optional[str],
     max_concurrent: int,
     base_url: str,
+    page_range: Optional[str],
+    skip_cache: bool,
 ):
     """Perform OCR on documents"""
 
@@ -339,17 +360,20 @@ def ocr(
 
     try:
         # Set API key and base URL in client
-        settings.DATALAB_API_KEY = api_key
-        settings.DATALAB_HOST = base_url
-
         if path.is_file():
             # Single file processing
             if file_extensions and path.suffix.lower() not in file_extensions:
                 click.echo(f"❌ Skipping {path}: unsupported file type", err=True)
                 sys.exit(1)
 
+            options = ProcessingOptions(
+                max_pages=max_pages,
+                page_range=page_range,
+                skip_cache=skip_cache,
+            )
+
             result = process_single_file_sync(
-                path, output_dir, "ocr", max_pages=max_pages
+                path, output_dir, "ocr", options, api_key=api_key, base_url=base_url
             )
 
             if result["success"]:

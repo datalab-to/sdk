@@ -87,7 +87,11 @@ result = client.ocr("document.pdf")
 print(result.get_text())
 
 # OCR with options
-result = client.ocr("document.pdf", max_pages=5)
+from datalab_sdk import ProcessingOptions
+options = ProcessingOptions(
+    max_pages=2
+)
+result = client.ocr("document.pdf", options)
 
 # OCR and save automatically
 result = client.ocr("document.pdf", save_output="output/ocr_result")
@@ -147,7 +151,7 @@ result = client.convert("research_paper.pdf", options=options)
 # Parse JSON to find equations
 import json
 data = json.loads(result.json)
-equations = [block for block in data if block.get('btype') == 'Formula']
+equations = [block for block in data if block.get('block_type') == 'Formula']
 print(f"Found {len(equations)} equations")
 ```
 

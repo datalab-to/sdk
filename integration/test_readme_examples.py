@@ -132,7 +132,8 @@ class TestAPIMethodExamples:
         assert isinstance(text, str)
 
         # OCR with options
-        result = client.ocr(DATA_DIR / "adversarial.pdf", max_pages=1)
+        options = ProcessingOptions(max_pages=1)
+        result = client.ocr(DATA_DIR / "adversarial.pdf", options)
         assert result.success is True
         assert len(result.pages) > 0
 
