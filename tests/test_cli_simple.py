@@ -40,9 +40,9 @@ class TestConvertCommand:
                     [
                         "convert",
                         tmp_file.name,
-                        "--api-key",
+                        "--api_key",
                         "test-key",
-                        "--output-dir",
+                        "--output_dir",
                         "/tmp/output",
                     ],
                 )
@@ -78,7 +78,7 @@ class TestConvertCommand:
                 # Set environment variable
                 settings.DATALAB_API_KEY = "env-api-key"
                 result = runner.invoke(
-                    cli, ["convert", tmp_file.name, "--output-dir", "/tmp/output"]
+                    cli, ["convert", tmp_file.name, "--output_dir", "/tmp/output"]
                 )
                 settings.DATALAB_API_KEY = None
 
@@ -99,7 +99,7 @@ class TestConvertCommand:
                 # Clear environment variable
                 with patch.dict(os.environ, {}, clear=True):
                     result = runner.invoke(
-                        cli, ["convert", tmp_file.name, "--output-dir", "/tmp/output"]
+                        cli, ["convert", tmp_file.name, "--output_dir", "/tmp/output"]
                     )
 
                     assert result.exit_code == 1
@@ -142,9 +142,9 @@ class TestOCRCommand:
                     [
                         "ocr",
                         tmp_file.name,
-                        "--api-key",
+                        "--api_key",
                         "test-key",
-                        "--output-dir",
+                        "--output_dir",
                         "/tmp/output",
                     ],
                 )
@@ -187,11 +187,11 @@ class TestOCRCommand:
                     [
                         "ocr",
                         tmp_file.name,
-                        "--api-key",
+                        "--api_key",
                         "test-key",
-                        "--output-dir",
+                        "--output_dir",
                         "/tmp/output",
-                        "--max-pages",
+                        "--max_pages",
                         "5",
                     ],
                 )
@@ -239,9 +239,9 @@ class TestOCRCommand:
                 [
                     "ocr",
                     tmp_dir,
-                    "--api-key",
+                    "--api_key",
                     "test-key",
-                    "--output-dir",
+                    "--output_dir",
                     "/tmp/output",
                 ],
             )

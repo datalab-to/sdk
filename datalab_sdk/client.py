@@ -62,7 +62,7 @@ class AsyncDatalabClient:
                 timeout=timeout,
                 headers={
                     "X-Api-Key": self.api_key,
-                    "User-Agent": "datalab-python-sdk/0.0.1",
+                    "User-Agent": "datalab-python-sdk/0.1.0",
                 },
             )
 
