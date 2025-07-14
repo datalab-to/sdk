@@ -202,7 +202,7 @@ class TestOCRCommand:
                 # Verify ocr was called with correct parameters
                 mock_client.ocr.assert_called_once()
                 args, kwargs = mock_client.ocr.call_args
-                assert kwargs.get("max_pages") == 5
+                assert kwargs.get("options").max_pages == 5
 
             finally:
                 os.unlink(tmp_file.name)

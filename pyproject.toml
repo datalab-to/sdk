@@ -1,6 +1,6 @@
 [project]
-name = "datalab-sdk"
-version = "0.1.0"
+name = "datalab-python-sdk"
+version = "0.1.1"
 description = "Auto-generated SDK for Datalab API"
 requires-python = ">=3.10"
 dependencies = [

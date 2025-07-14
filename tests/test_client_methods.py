@@ -285,7 +285,7 @@ class TestOCRMethod:
                     text_file = output_path.with_suffix(".txt")
                     assert text_file.exists()
                     saved_text = text_file.read_text()
-                    assert saved_text == "Line 1\nLine 2"
+                    assert "800" in saved_text and "600" in saved_text
 
                     # Verify JSON file was saved
                     json_file = output_path.with_suffix(".ocr.json")
@@ -338,8 +338,12 @@ class TestOCRMethod:
                 mock_request.return_value = mock_initial_response
                 mock_poll.return_value = mock_result_response
 
+                options = ProcessingOptions(
+                    max_pages=2,
+                )
+
                 # Test OCR with max_pages
-                result = client.ocr(pdf_file, max_pages=2)
+                result = client.ocr(pdf_file, options=options)
 
                 # Verify result
                 assert isinstance(result, OCRResult)

@@ -15,8 +15,8 @@ class ProcessingOptions:
 
     # Common options
     max_pages: Optional[int] = None
-    output_format: str = "markdown"  # markdown, json, html
     skip_cache: bool = True
+    page_range: Optional[str] = None
 
     # Marker specific options
     force_ocr: bool = False
@@ -25,14 +25,10 @@ class ProcessingOptions:
     use_llm: bool = False
     strip_existing_ocr: bool = False
     disable_image_extraction: bool = False
-    page_range: Optional[str] = None
     block_correction_prompt: Optional[str] = None
     additional_config: Optional[Dict[str, Any]] = None
     page_schema: Optional[Dict[str, Any]] = None
-
-    # Table recognition options
-    skip_table_detection: bool = False
-    detect_cell_boxes: bool = False
+    output_format: str = "markdown"  # markdown, json, html
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -136,9 +132,8 @@ class OCRResult:
         output_path = Path(output_path)
 
         # Save as text file
-        text_content = self.get_text()
         with open(output_path.with_suffix(".txt"), "w", encoding="utf-8") as f:
-            f.write(text_content)
+            json.dump(self.pages, f, indent=2)
 
         # Save detailed OCR data as JSON
         with open(output_path.with_suffix(".ocr.json"), "w", encoding="utf-8") as f:

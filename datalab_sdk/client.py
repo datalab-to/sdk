@@ -145,17 +145,7 @@ class AsyncDatalabClient:
 
         return file_path.name, file_path.read_bytes(), mime_type
 
-    # Convenient endpoint-specific methods
-    async def convert(
-        self,
-        file_path: Union[str, Path],
-        options: Optional[ProcessingOptions] = None,
-        save_output: Optional[Union[str, Path]] = None,
-    ) -> ConversionResult:
-        """Convert a document using the marker endpoint"""
-        if options is None:
-            options = ProcessingOptions()
-
+    def get_form_params(self, file_path, options):
         filename, file_data, mime_type = self._prepare_file_data(file_path)
 
         form_data = aiohttp.FormData()
@@ -169,8 +159,21 @@ class AsyncDatalabClient:
             else:
                 form_data.add_field(key, str(value))
 
+        return form_data
+
+    # Convenient endpoint-specific methods
+    async def convert(
+        self,
+        file_path: Union[str, Path],
+        options: Optional[ProcessingOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+    ) -> ConversionResult:
+        """Convert a document using the marker endpoint"""
+        if options is None:
+            options = ProcessingOptions()
+
         initial_data = await self._make_request(
-            "POST", "/api/v1/marker", data=form_data
+            "POST", "/api/v1/marker", data=self.get_form_params(file_path, options)
         )
 
         if not initial_data.get("success"):
@@ -204,21 +207,16 @@ class AsyncDatalabClient:
     async def ocr(
         self,
         file_path: Union[str, Path],
-        max_pages: Optional[int] = None,
+        options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
     ) -> OCRResult:
         """Perform OCR on a document"""
-        filename, file_data, mime_type = self._prepare_file_data(file_path)
+        if options is None:
+            options = ProcessingOptions()
 
-        form_data = aiohttp.FormData()
-        form_data.add_field(
-            "file", file_data, filename=filename, content_type=mime_type
+        initial_data = await self._make_request(
+            "POST", "/api/v1/ocr", data=self.get_form_params(file_path, options)
         )
-
-        if max_pages is not None:
-            form_data.add_field("max_pages", str(max_pages))
-
-        initial_data = await self._make_request("POST", "/api/v1/ocr", data=form_data)
 
         if not initial_data.get("success"):
             raise DatalabAPIError(
@@ -292,10 +290,8 @@ class DatalabClient:
     def ocr(
         self,
         file_path: Union[str, Path],
-        max_pages: Optional[int] = None,
+        options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
     ) -> OCRResult:
         """Perform OCR on a document (sync version)"""
-        return self._run_async(
-            self._async_client.ocr(file_path, max_pages, save_output)
-        )
+        return self._run_async(self._async_client.ocr(file_path, options, save_output))
