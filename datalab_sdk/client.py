@@ -269,7 +269,12 @@ class DatalabClient:
 
     def _run_async(self, coro):
         """Run async coroutine in sync context"""
-        return asyncio.run(self._async_wrapper(coro))
+        try:
+            loop = asyncio.get_event_loop()
+            return loop.run_until_complete(self._async_wrapper(coro))
+        except RuntimeError:
+            # No event loop exists, create and clean up
+            return asyncio.run(self._async_wrapper(coro))
 
     async def _async_wrapper(self, coro):
         """Wrapper to ensure session management"""
