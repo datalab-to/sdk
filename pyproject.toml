@@ -1,6 +1,11 @@
 [project]
 name = "datalab-python-sdk"
-version = "0.1.2"
+authors = ["Datalab Team <hi@datalab.to>"]
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/datalab-to/sdk"
+keywords = ["datalab", "sdk", "document-intelligence", "api"]
+version = "0.1.3"
 description = "SDK for the Datalab document intelligence API"
 requires-python = ">=3.10"
 dependencies = [
@@ -8,9 +13,7 @@ dependencies = [
     "click>=8.2.1",
     "pydantic (>=2.11.7,<3.0.0)",
     "pydantic-settings (>=2.10.1,<3.0.0)",
-    "pytest-asyncio>=1.0.0",
 ]
-
 
 [project.scripts]
 datalab = "datalab_sdk.cli:cli"

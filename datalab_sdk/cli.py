@@ -186,7 +186,7 @@ def process_single_file_sync(
 
 
 @click.group()
-@click.version_option(version="1.0.0")
+@click.version_option(version=settings.VERSION)
 def cli():
     """Datalab SDK - Command line interface for document processing"""
     pass
