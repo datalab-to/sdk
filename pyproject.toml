@@ -1,24 +1,29 @@
 [project]
 name = "datalab-python-sdk"
-version = "0.1.2"
+authors = [
+    {name = "Datalab Team", email = "hi@datalab.to"}
+]
+readme = "README.md"
+license = "MIT"
+repository = "https://github.com/datalab-to/sdk"
+keywords = ["datalab", "sdk", "document-intelligence", "api"]
+version = "0.1.3"
 description = "SDK for the Datalab document intelligence API"
 requires-python = ">=3.10"
 dependencies = [
     "aiohttp>=3.12.14",
     "click>=8.2.1",
-    "pydantic (>=2.11.7,<3.0.0)",
-    "pydantic-settings (>=2.10.1,<3.0.0)",
-    "pytest-asyncio>=1.0.0",
+    "pydantic>=2.11.7,<3.0.0",
+    "pydantic-settings>=2.10.1,<3.0.0",
 ]
-
 
 [project.scripts]
 datalab = "datalab_sdk.cli:cli"
 
-[project.optional-dependencies]
+[project.dev-dependencies]
 test = [
     "pytest>=7.4.0",
-    "pytest-asyncio>=0.21.0",
+    "pytest-asyncio>=1.0.0",
     "pytest-mock>=3.11.0",
     "pytest-cov>=4.1.0",
     "aiofiles>=23.2.0",
@@ -33,8 +38,11 @@ packages = ["datalab_sdk"]
 
 [dependency-groups]
 dev = [
+    "aiohttp>=3.12.14",
+    "click>=8.2.1",
     "pre-commit>=4.2.0",
     "pytest>=8.4.1",
+    "pytest-asyncio>=1.0.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.12.2",
 ]

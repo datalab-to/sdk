@@ -68,7 +68,7 @@ class AsyncDatalabClient:
                 timeout=timeout,
                 headers={
                     "X-Api-Key": self.api_key,
-                    "User-Agent": "datalab-python-sdk/0.1.0",
+                    "User-Agent": f"datalab-python-sdk/{settings.VERSION}",
                 },
             )
 
@@ -269,13 +269,7 @@ class DatalabClient:
 
     def _run_async(self, coro):
         """Run async coroutine in sync context"""
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        return loop.run_until_complete(self._async_wrapper(coro))
+        return asyncio.run(self._async_wrapper(coro))
 
     async def _async_wrapper(self, coro):
         """Wrapper to ensure session management"""
