@@ -31,7 +31,7 @@ print(result.markdown)
 
 # OCR a document
 ocr_result = client.ocr("document.pdf")
-print(ocr_result.get_text())  # Get all text as string
+print(ocr_result.pages)  # Get all text as string
 ```
 
 ### Async Usage
@@ -64,8 +64,8 @@ Convert PDFs, Office documents, and images to markdown, HTML, or JSON.
 result = client.convert("document.pdf")
 
 # With options
-from datalab_sdk import ProcessingOptions
-options = ProcessingOptions(
+from datalab_sdk import ConvertOptions
+options = ConvertOptions(
     force_ocr=True,
     output_format="html",
     use_llm=True,
@@ -87,8 +87,8 @@ result = client.ocr("document.pdf")
 print(result.get_text())
 
 # OCR with options
-from datalab_sdk import ProcessingOptions
-options = ProcessingOptions(
+from datalab_sdk import OCROptions
+options = OCROptions(
     max_pages=2
 )
 result = client.ocr("document.pdf", options)
@@ -142,10 +142,10 @@ except DatalabTimeoutError as e:
 ### Extract JSON Data
 
 ```python
-from datalab_sdk import DatalabClient, ProcessingOptions
+from datalab_sdk import DatalabClient, ConvertOptions
 
 client = DatalabClient(api_key="YOUR_API_KEY")
-options = ProcessingOptions(output_format="json")
+options = ConvertOptions(output_format="json")
 result = client.convert("research_paper.pdf", options=options)
 
 # Parse JSON to find equations

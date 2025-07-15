@@ -12,7 +12,7 @@ import click
 
 from datalab_sdk.client import DatalabClient, AsyncDatalabClient
 from datalab_sdk.mimetypes import SUPPORTED_EXTENSIONS
-from datalab_sdk.models import ProcessingOptions
+from datalab_sdk.models import OCROptions, ConvertOptions, ProcessingOptions
 from datalab_sdk.exceptions import DatalabError
 from datalab_sdk.settings import settings
 
@@ -242,7 +242,7 @@ def convert(
         ]
 
     # Create processing options
-    options = ProcessingOptions(
+    options = ConvertOptions(
         output_format=output_format,
         max_pages=max_pages,
         force_ocr=force_ocr,
@@ -366,7 +366,7 @@ def ocr(
                 click.echo(f"❌ Skipping {path}: unsupported file type", err=True)
                 sys.exit(1)
 
-            options = ProcessingOptions(
+            options = OCROptions(
                 max_pages=max_pages,
                 page_range=page_range,
                 skip_cache=skip_cache,

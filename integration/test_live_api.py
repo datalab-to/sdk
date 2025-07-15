@@ -14,7 +14,7 @@ import pytest
 import os
 from pathlib import Path
 from datalab_sdk import DatalabClient, AsyncDatalabClient
-from datalab_sdk.models import ProcessingOptions, ConversionResult, OCRResult
+from datalab_sdk.models import ConversionResult, OCRResult, ConvertOptions, OCROptions
 from datalab_sdk.exceptions import DatalabError
 
 # Test data files
@@ -32,7 +32,7 @@ class TestMarkerIntegration:
         pdf_file = DATA_DIR / "adversarial.pdf"
 
         # Convert with limited pages to keep test fast
-        options = ProcessingOptions(max_pages=2)
+        options = ConvertOptions(max_pages=2)
         result = client.convert(pdf_file, options=options)
 
         # Verify result
@@ -52,7 +52,7 @@ class TestMarkerIntegration:
         doc_file = DATA_DIR / "bid_evaluation.docx"
 
         # Convert to HTML format
-        options = ProcessingOptions(output_format="html", max_pages=1)
+        options = ConvertOptions(output_format="html", max_pages=1)
         result = client.convert(doc_file, options=options)
 
         # Verify result
@@ -70,7 +70,7 @@ class TestMarkerIntegration:
             ppt_file = DATA_DIR / "08-Lambda-Calculus.pptx"
 
             # Convert to JSON format
-            options = ProcessingOptions(output_format="json", max_pages=1)
+            options = ConvertOptions(output_format="json", max_pages=1)
             result = await client.convert(ppt_file, options=options)
 
             # Verify result
@@ -94,7 +94,7 @@ class TestOCRIntegration:
         pdf_file = DATA_DIR / "thinkpython.pdf"
 
         # OCR with limited pages
-        options = ProcessingOptions(max_pages=1)
+        options = OCROptions(max_pages=1)
         result = client.ocr(pdf_file, options)
 
         # Verify result
@@ -149,7 +149,7 @@ class TestOCRIntegration:
             pdf_file = DATA_DIR / "adversarial.pdf"
 
             # OCR with limited pages
-            options = ProcessingOptions(max_pages=2)
+            options = OCROptions(max_pages=2)
             result = await client.ocr(pdf_file, options)
 
             # Verify result
@@ -223,7 +223,7 @@ class TestSaveOutput:
         output_path = tmp_path / "test_output"
 
         # Convert with save_output
-        options = ProcessingOptions(max_pages=1)
+        options = ConvertOptions(max_pages=1)
         result = client.convert(pdf_file, options=options, save_output=output_path)
 
         # Verify result

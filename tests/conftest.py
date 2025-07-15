@@ -10,8 +10,7 @@ from aiohttp.test_utils import TestServer
 import json
 import tempfile
 
-from datalab_sdk import DatalabClient, AsyncDatalabClient
-from datalab_sdk.models import ProcessingOptions
+from datalab_sdk import DatalabClient, AsyncDatalabClient, ConvertOptions
 
 
 @pytest.fixture
@@ -144,7 +143,7 @@ async def mock_async_client(mock_server):
 @pytest.fixture
 def processing_options():
     """Create sample processing options"""
-    return ProcessingOptions(
+    return ConvertOptions(
         force_ocr=True, output_format="markdown", use_llm=False, max_pages=10
     )
 
