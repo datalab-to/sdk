@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Optional, List
 import click
 
-from datalab_sdk.client import DatalabClient, AsyncDatalabClient
+from datalab_sdk.client import AsyncDatalabClient
 from datalab_sdk.mimetypes import SUPPORTED_EXTENSIONS
 from datalab_sdk.models import OCROptions, ConvertOptions, ProcessingOptions
 from datalab_sdk.exceptions import DatalabError
@@ -103,8 +103,9 @@ async def process_files_async(
     output_dir: Path,
     method: str,
     options: Optional[ProcessingOptions] = None,
-    max_pages: Optional[int] = None,
     max_concurrent: int = 5,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> List[dict]:
     """Process files asynchronously"""
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -114,16 +115,20 @@ async def process_files_async(
             try:
                 # Create output path
                 relative_path = file_path.name
-                output_path = output_dir / Path(relative_path).stem
+                output_path = (
+                    output_dir / Path(relative_path).stem / Path(relative_path).stem
+                )
 
-                async with AsyncDatalabClient() as client:
+                async with AsyncDatalabClient(
+                    api_key=api_key, base_url=base_url
+                ) as client:
                     if method == "convert":
                         result = await client.convert(
                             file_path, options=options, save_output=output_path
                         )
                     else:  # method == 'ocr'
                         result = await client.ocr(
-                            file_path, max_pages=max_pages, save_output=output_path
+                            file_path, options=options, save_output=output_path
                         )
 
                 return {
@@ -149,46 +154,155 @@ async def process_files_async(
     return results
 
 
-def process_single_file_sync(
-    file_path: Path,
-    output_dir: Path,
+def setup_output_directory(output_dir: Optional[str]) -> Path:
+    """Setup and return output directory"""
+    if output_dir is None:
+        output_dir = os.getcwd()
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    return output_dir
+
+
+def parse_extensions(extensions: Optional[str]) -> Optional[List[str]]:
+    """Parse file extensions from comma-separated string"""
+    if not extensions:
+        return None
+
+    file_extensions = [ext.strip() for ext in extensions.split(",")]
+    return [ext if ext.startswith(".") else f".{ext}" for ext in file_extensions]
+
+
+def get_files_to_process(
+    path: Path, file_extensions: Optional[List[str]]
+) -> List[Path]:
+    """Get list of files to process"""
+    if path.is_file():
+        # Single file processing
+        if file_extensions and path.suffix.lower() not in file_extensions:
+            click.echo(f"❌ Skipping {path}: unsupported file type", err=True)
+            sys.exit(1)
+        return [path]
+    else:
+        # Directory processing
+        return find_files_in_directory(path, file_extensions)
+
+
+def show_results(results: List[dict], operation: str, output_dir: Path):
+    """Display processing results"""
+    successful = sum(1 for r in results if r["success"])
+    failed = len(results) - successful
+
+    click.echo(f"\n📊 {operation} Summary:")
+    click.echo(f"   ✅ Successfully processed: {successful} files")
+    if failed > 0:
+        click.echo(f"   ❌ Failed: {failed} files")
+
+        # Show failed files
+        click.echo("\n   Failed files:")
+        for result in results:
+            if not result["success"]:
+                click.echo(f"      - {result['file_path']}: {result['error']}")
+
+    click.echo(f"\n📁 Output saved to: {output_dir}")
+
+
+def process_documents(
+    path: str,
     method: str,
-    options: Optional[ProcessingOptions] = None,
-    **kwargs,
-) -> dict:
-    """Process a single file synchronously"""
+    api_key: Optional[str],
+    output_dir: Optional[str],
+    max_pages: Optional[int],
+    extensions: Optional[str],
+    max_concurrent: int,
+    base_url: str,
+    page_range: Optional[str],
+    skip_cache: bool,
+    # Convert-specific options
+    output_format: Optional[str] = None,
+    force_ocr: bool = False,
+    format_lines: bool = False,
+    paginate: bool = False,
+    use_llm: bool = False,
+    strip_existing_ocr: bool = False,
+    disable_image_extraction: bool = False,
+    block_correction_prompt: Optional[str] = None,
+    page_schema: Optional[str] = None,
+):
+    """Unified document processing function"""
     try:
-        # Create output path
-        output_path = output_dir / file_path.stem
-        output_file = output_path / file_path.stem
+        # Validate inputs
+        if api_key is None:
+            api_key = settings.DATALAB_API_KEY
 
-        client = DatalabClient(**kwargs)
+        if api_key is None:
+            raise DatalabError(
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+            )
+
+        if base_url is None:
+            base_url = settings.DATALAB_HOST
+
+        output_dir = setup_output_directory(output_dir)
+        file_extensions = parse_extensions(extensions)
+
+        # Get files to process
+        path = Path(path)
+        to_process = get_files_to_process(path, file_extensions)
+
+        if not to_process:
+            click.echo(f"❌ No supported files found in {path}", err=True)
+            sys.exit(1)
+
+        click.echo(f"📂 Found {len(to_process)} files to process")
+
+        # Create processing options based on method
         if method == "convert":
-            result = client.convert(file_path, options=options, save_output=output_file)
-        else:  # method == 'ocr'
-            result = client.ocr(file_path, options=options, save_output=output_file)
+            options = ConvertOptions(
+                output_format=output_format,
+                max_pages=max_pages,
+                force_ocr=force_ocr,
+                format_lines=format_lines,
+                paginate=paginate,
+                use_llm=use_llm,
+                strip_existing_ocr=strip_existing_ocr,
+                disable_image_extraction=disable_image_extraction,
+                page_range=page_range,
+                block_correction_prompt=block_correction_prompt,
+                skip_cache=skip_cache,
+                page_schema=page_schema,
+            )
+        else:  # method == "ocr"
+            options = OCROptions(
+                max_pages=max_pages,
+                page_range=page_range,
+                skip_cache=skip_cache,
+            )
 
-        return {
-            "file_path": str(file_path),
-            "output_path": str(output_path),
-            "success": result.success,
-            "error": result.error,
-            "page_count": result.page_count,
-        }
-    except Exception as e:
-        return {
-            "file_path": str(file_path),
-            "output_path": None,
-            "success": False,
-            "error": str(e),
-            "page_count": None,
-        }
+        results = asyncio.run(
+            process_files_async(
+                to_process,
+                output_dir,
+                method,
+                options=options,
+                max_concurrent=max_concurrent,
+                api_key=api_key,
+                base_url=base_url,
+            )
+        )
+
+        # Show results
+        operation = "Conversion" if method == "convert" else "OCR"
+        show_results(results, operation, output_dir)
+
+    except DatalabError as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
 
 
 @click.group()
 @click.version_option(version=settings.VERSION)
 def cli():
-    """Datalab SDK - Command line interface for document processing"""
     pass
 
 
@@ -217,106 +331,27 @@ def convert(
     page_schema: Optional[str],
 ):
     """Convert documents to markdown, HTML, or JSON"""
-
-    if api_key is None:
-        api_key = settings.DATALAB_API_KEY
-    if api_key is None:
-        raise DatalabError(
-            "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
-        )
-
-    path = Path(path)
-
-    if output_dir is None:
-        output_dir = os.getcwd()
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Parse extensions
-    file_extensions = None
-    if extensions:
-        file_extensions = [ext.strip() for ext in extensions.split(",")]
-        file_extensions = [
-            ext if ext.startswith(".") else f".{ext}" for ext in file_extensions
-        ]
-
-    # Create processing options
-    options = ConvertOptions(
-        output_format=output_format,
+    process_documents(
+        path=path,
+        method="convert",
+        api_key=api_key,
+        output_dir=output_dir,
         max_pages=max_pages,
+        extensions=extensions,
+        max_concurrent=max_concurrent,
+        base_url=base_url,
+        page_range=page_range,
+        skip_cache=skip_cache,
+        output_format=output_format,
         force_ocr=force_ocr,
         format_lines=format_lines,
         paginate=paginate,
         use_llm=use_llm,
         strip_existing_ocr=strip_existing_ocr,
         disable_image_extraction=disable_image_extraction,
-        page_range=page_range,
         block_correction_prompt=block_correction_prompt,
-        skip_cache=skip_cache,
         page_schema=page_schema,
     )
-
-    try:
-        if path.is_file():
-            # Single file processing
-            if file_extensions and path.suffix.lower() not in file_extensions:
-                click.echo(f"❌ Skipping {path}: unsupported file type", err=True)
-                sys.exit(1)
-
-            result = process_single_file_sync(
-                path, output_dir, "convert", options, api_key=api_key, base_url=base_url
-            )
-
-            if result["success"]:
-                click.echo(f"✅ Successfully converted {result['file_path']}")
-                if result["page_count"]:
-                    click.echo(f"   📄 Processed {result['page_count']} pages")
-                if result["output_path"]:
-                    click.echo(f"   📁 Output saved to: {result['output_path']}")
-            else:
-                click.echo(
-                    f"❌ Failed to convert {result['file_path']}: {result['error']}",
-                    err=True,
-                )
-                sys.exit(1)
-        else:
-            # Directory processing
-            files = find_files_in_directory(path, file_extensions)
-
-            if not files:
-                click.echo(f"❌ No supported files found in {path}", err=True)
-                sys.exit(1)
-
-            click.echo(f"📂 Found {len(files)} files to process")
-
-            # Process files asynchronously
-            results = asyncio.run(
-                process_files_async(
-                    files, output_dir, "convert", options, max_pages, max_concurrent
-                )
-            )
-
-            # Show results
-            successful = sum(1 for r in results if r["success"])
-            failed = len(results) - successful
-
-            click.echo("\n📊 Conversion Summary:")
-            click.echo(f"   ✅ Successfully converted: {successful} files")
-            if failed > 0:
-                click.echo(f"   ❌ Failed: {failed} files")
-
-                # Show failed files
-                click.echo("\n   Failed files:")
-                for result in results:
-                    if not result["success"]:
-                        click.echo(f"      - {result['file_path']}: {result['error']}")
-
-            click.echo(f"\n📁 Output saved to: {output_dir}")
-
-    except DatalabError as e:
-        click.echo(f"❌ Error: {e}", err=True)
-        sys.exit(1)
 
 
 @click.command()
@@ -334,107 +369,23 @@ def ocr(
     skip_cache: bool,
 ):
     """Perform OCR on documents"""
-
-    if api_key is None:
-        api_key = settings.DATALAB_API_KEY
-    if api_key is None:
-        raise DatalabError(
-            "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
-        )
-
-    path = Path(path)
-
-    if output_dir is None:
-        output_dir = os.getcwd()
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Parse extensions
-    file_extensions = None
-    if extensions:
-        file_extensions = [ext.strip() for ext in extensions.split(",")]
-        file_extensions = [
-            ext if ext.startswith(".") else f".{ext}" for ext in file_extensions
-        ]
-
-    try:
-        # Set API key and base URL in client
-        if path.is_file():
-            # Single file processing
-            if file_extensions and path.suffix.lower() not in file_extensions:
-                click.echo(f"❌ Skipping {path}: unsupported file type", err=True)
-                sys.exit(1)
-
-            options = OCROptions(
-                max_pages=max_pages,
-                page_range=page_range,
-                skip_cache=skip_cache,
-            )
-
-            result = process_single_file_sync(
-                path, output_dir, "ocr", options, api_key=api_key, base_url=base_url
-            )
-
-            if result["success"]:
-                click.echo(f"✅ Successfully performed OCR on {result['file_path']}")
-                if result["page_count"]:
-                    click.echo(f"   📄 Processed {result['page_count']} pages")
-                if result["output_path"]:
-                    click.echo(f"   📁 Output saved to: {result['output_path']}")
-            else:
-                click.echo(
-                    f"❌ Failed OCR on {result['file_path']}: {result['error']}",
-                    err=True,
-                )
-                sys.exit(1)
-        else:
-            # Directory processing
-            files = find_files_in_directory(path, file_extensions)
-
-            if not files:
-                click.echo(f"❌ No supported files found in {path}", err=True)
-                sys.exit(1)
-
-            click.echo(f"📂 Found {len(files)} files to process")
-
-            # Process files asynchronously
-            results = asyncio.run(
-                process_files_async(
-                    files,
-                    output_dir,
-                    "ocr",
-                    max_pages=max_pages,
-                    max_concurrent=max_concurrent,
-                )
-            )
-
-            # Show results
-            successful = sum(1 for r in results if r["success"])
-            failed = len(results) - successful
-
-            click.echo("\n📊 OCR Summary:")
-            click.echo(f"   ✅ Successfully processed: {successful} files")
-            if failed > 0:
-                click.echo(f"   ❌ Failed: {failed} files")
-
-                # Show failed files
-                click.echo("\n   Failed files:")
-                for result in results:
-                    if not result["success"]:
-                        click.echo(f"      - {result['file_path']}: {result['error']}")
-
-            click.echo(f"\n📁 Output saved to: {output_dir}")
-
-    except DatalabError as e:
-        click.echo(f"❌ Error: {e}", err=True)
-        sys.exit(1)
+    process_documents(
+        path=path,
+        method="ocr",
+        api_key=api_key,
+        output_dir=output_dir,
+        max_pages=max_pages,
+        extensions=extensions,
+        max_concurrent=max_concurrent,
+        base_url=base_url,
+        page_range=page_range,
+        skip_cache=skip_cache,
+    )
 
 
 # Add commands to CLI group
 cli.add_command(convert)
 cli.add_command(ocr)
-
 
 if __name__ == "__main__":
     cli()
