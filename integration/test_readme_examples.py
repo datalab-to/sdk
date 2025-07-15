@@ -15,7 +15,7 @@ import json
 import tempfile
 from pathlib import Path
 from datalab_sdk import DatalabClient, AsyncDatalabClient
-from datalab_sdk.models import ProcessingOptions
+from datalab_sdk.models import ConvertOptions, OCROptions
 from datalab_sdk.settings import settings
 
 # Test data files
@@ -34,7 +34,7 @@ class TestBasicUsageExamples:
 
         # Convert PDF to markdown (using test data)
         result = client.convert(
-            DATA_DIR / "adversarial.pdf", options=ProcessingOptions(max_pages=1)
+            DATA_DIR / "adversarial.pdf", options=ConvertOptions(max_pages=1)
         )
         print(result.markdown)
 
@@ -61,7 +61,7 @@ class TestBasicUsageExamples:
             async with AsyncDatalabClient() as client:
                 # Convert PDF to markdown
                 result = await client.convert(
-                    DATA_DIR / "adversarial.pdf", options=ProcessingOptions(max_pages=1)
+                    DATA_DIR / "adversarial.pdf", options=ConvertOptions(max_pages=1)
                 )
                 print(result.markdown)
 
@@ -85,19 +85,19 @@ class TestAPIMethodExamples:
 
     def test_document_conversion_examples(self):
         """Test Document Conversion section examples"""
-        from datalab_sdk import DatalabClient, ProcessingOptions
+        from datalab_sdk import DatalabClient, ConvertOptions
 
         client = DatalabClient()
 
         # Basic conversion
         result = client.convert(
-            DATA_DIR / "adversarial.pdf", options=ProcessingOptions(max_pages=1)
+            DATA_DIR / "adversarial.pdf", options=ConvertOptions(max_pages=1)
         )
         assert result.success is True
         assert result.markdown is not None
 
         # With options
-        options = ProcessingOptions(
+        options = ConvertOptions(
             force_ocr=True,
             output_format="html",
             use_llm=False,  # Keep false for cost reasons
@@ -112,7 +112,7 @@ class TestAPIMethodExamples:
             output_path = Path(tmp_dir) / "result"
             result = client.convert(
                 DATA_DIR / "adversarial.pdf",
-                options=ProcessingOptions(max_pages=1),
+                options=ConvertOptions(max_pages=1),
                 save_output=output_path,
             )
             assert result.success is True
@@ -132,7 +132,7 @@ class TestAPIMethodExamples:
         assert isinstance(text, str)
 
         # OCR with options
-        options = ProcessingOptions(max_pages=1)
+        options = OCROptions(max_pages=1)
         result = client.ocr(DATA_DIR / "adversarial.pdf", options)
         assert result.success is True
         assert len(result.pages) > 0
@@ -158,7 +158,7 @@ class TestErrorHandlingExamples:
         # Test with valid file (should not raise error)
         try:
             result = client.convert(
-                DATA_DIR / "adversarial.pdf", options=ProcessingOptions(max_pages=1)
+                DATA_DIR / "adversarial.pdf", options=ConvertOptions(max_pages=1)
             )
             assert result.success is True
         except DatalabAPIError as e:
@@ -171,7 +171,7 @@ class TestErrorHandlingExamples:
 
         with pytest.raises(DatalabAPIError):
             invalid_client.convert(
-                DATA_DIR / "adversarial.pdf", options=ProcessingOptions(max_pages=1)
+                DATA_DIR / "adversarial.pdf", options=ConvertOptions(max_pages=1)
             )
 
 
@@ -180,10 +180,10 @@ class TestExamplesSectionFromReadme:
 
     def test_extract_json_data_example(self):
         """Test Extract JSON Data example"""
-        from datalab_sdk import DatalabClient, ProcessingOptions
+        from datalab_sdk import DatalabClient, ConvertOptions
 
         client = DatalabClient()
-        options = ProcessingOptions(output_format="json", max_pages=1)
+        options = ConvertOptions(output_format="json", max_pages=1)
         result = client.convert(DATA_DIR / "adversarial.pdf", options=options)
 
         # Parse JSON to find equations (modified to not fail if no equations)
@@ -221,7 +221,7 @@ class TestExamplesSectionFromReadme:
                         if file.suffix == ".pdf":
                             result = await client.convert(
                                 str(file),
-                                options=ProcessingOptions(max_pages=1),
+                                options=ConvertOptions(max_pages=1),
                                 save_output=output_path,
                             )
                             print(f"{file.name}: {result.page_count} pages")
@@ -247,7 +247,7 @@ class TestClientInitializationVariations:
 
         client = DatalabClient()
         result = client.convert(
-            DATA_DIR / "adversarial.pdf", options=ProcessingOptions(max_pages=1)
+            DATA_DIR / "adversarial.pdf", options=ConvertOptions(max_pages=1)
         )
         assert result.success is True
 
@@ -262,7 +262,7 @@ class TestClientInitializationVariations:
             # Client should use environment variable
             client = DatalabClient()
             result = client.convert(
-                DATA_DIR / "adversarial.pdf", options=ProcessingOptions(max_pages=1)
+                DATA_DIR / "adversarial.pdf", options=ConvertOptions(max_pages=1)
             )
             assert result.success is True
         finally:
@@ -280,7 +280,7 @@ class TestClientInitializationVariations:
             api_key=settings.DATALAB_API_KEY, base_url=settings.DATALAB_HOST
         ) as client:
             result = await client.convert(
-                DATA_DIR / "adversarial.pdf", options=ProcessingOptions(max_pages=1)
+                DATA_DIR / "adversarial.pdf", options=ConvertOptions(max_pages=1)
             )
             assert result.success is True
             assert result.markdown is not None
@@ -291,9 +291,9 @@ class TestProcessingOptionsVariations:
 
     def test_processing_options_defaults(self):
         """Test ProcessingOptions with default values"""
-        from datalab_sdk import ProcessingOptions
+        from datalab_sdk import ConvertOptions
 
-        options = ProcessingOptions()
+        options = ConvertOptions()
         assert options.force_ocr is False
         assert options.output_format == "markdown"
         assert options.use_llm is False
@@ -301,9 +301,9 @@ class TestProcessingOptionsVariations:
 
     def test_processing_options_custom_values(self):
         """Test ProcessingOptions with custom values"""
-        from datalab_sdk import ProcessingOptions
+        from datalab_sdk import ConvertOptions
 
-        options = ProcessingOptions(
+        options = ConvertOptions(
             force_ocr=True,
             output_format="html",
             use_llm=False,  # Keep false for cost reasons
@@ -319,9 +319,9 @@ class TestProcessingOptionsVariations:
 
     def test_processing_options_json_output(self):
         """Test ProcessingOptions with JSON output"""
-        from datalab_sdk import ProcessingOptions
+        from datalab_sdk import ConvertOptions
 
-        options = ProcessingOptions(output_format="json", max_pages=1)
+        options = ConvertOptions(output_format="json", max_pages=1)
 
         client = DatalabClient()
         result = client.convert(DATA_DIR / "adversarial.pdf", options=options)

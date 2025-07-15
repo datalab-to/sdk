@@ -7,7 +7,7 @@ from unittest.mock import patch, AsyncMock
 import json
 
 from datalab_sdk import DatalabClient, AsyncDatalabClient
-from datalab_sdk.models import ProcessingOptions, ConversionResult, OCRResult
+from datalab_sdk.models import ConversionResult, OCRResult, ConvertOptions, OCROptions
 from datalab_sdk.exceptions import DatalabAPIError, DatalabFileError
 
 
@@ -124,7 +124,7 @@ class TestConvertMethod:
         pdf_file.write_bytes(b"%PDF-1.4\n%Test PDF content\n%%EOF\n")
 
         # Create processing options
-        options = ProcessingOptions(
+        options = ConvertOptions(
             force_ocr=True, output_format="html", use_llm=True, max_pages=5
         )
 
@@ -338,7 +338,7 @@ class TestOCRMethod:
                 mock_request.return_value = mock_initial_response
                 mock_poll.return_value = mock_result_response
 
-                options = ProcessingOptions(
+                options = OCROptions(
                     max_pages=2,
                 )
 

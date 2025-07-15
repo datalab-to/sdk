@@ -11,24 +11,10 @@ import base64
 
 @dataclass
 class ProcessingOptions:
-    """Options for document processing"""
-
     # Common options
     max_pages: Optional[int] = None
     skip_cache: bool = True
     page_range: Optional[str] = None
-
-    # Marker specific options
-    force_ocr: bool = False
-    format_lines: bool = False
-    paginate: bool = False
-    use_llm: bool = False
-    strip_existing_ocr: bool = False
-    disable_image_extraction: bool = False
-    block_correction_prompt: Optional[str] = None
-    additional_config: Optional[Dict[str, Any]] = None
-    page_schema: Optional[Dict[str, Any]] = None
-    output_format: str = "markdown"  # markdown, json, html
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -45,6 +31,28 @@ class ProcessingOptions:
                     form_data[key] = (None, value)
 
         return form_data
+
+
+@dataclass
+class ConvertOptions(ProcessingOptions):
+    """Options for marker conversion"""
+
+    # Marker specific options
+    force_ocr: bool = False
+    format_lines: bool = False
+    paginate: bool = False
+    use_llm: bool = False
+    strip_existing_ocr: bool = False
+    disable_image_extraction: bool = False
+    block_correction_prompt: Optional[str] = None
+    additional_config: Optional[Dict[str, Any]] = None
+    page_schema: Optional[Dict[str, Any]] = None
+    output_format: str = "markdown"  # markdown, json, html
+
+
+@dataclass
+class OCROptions(ProcessingOptions):
+    pass
 
 
 @dataclass

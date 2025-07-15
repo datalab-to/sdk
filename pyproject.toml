@@ -1,7 +1,7 @@
 [project]
 name = "datalab-python-sdk"
-version = "0.1.1"
-description = "Auto-generated SDK for Datalab API"
+version = "0.1.2"
+description = "SDK for the Datalab document intelligence API"
 requires-python = ">=3.10"
 dependencies = [
     "aiohttp>=3.12.14",
@@ -35,5 +35,6 @@ packages = ["datalab_sdk"]
 dev = [
     "pre-commit>=4.2.0",
     "pytest>=8.4.1",
+    "pytest-xdist>=3.8.0",
     "ruff>=0.12.2",
 ]

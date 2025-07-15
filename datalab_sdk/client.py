@@ -14,7 +14,13 @@ from datalab_sdk.exceptions import (
     DatalabFileError,
 )
 from datalab_sdk.mimetypes import MIMETYPE_MAP
-from datalab_sdk.models import ConversionResult, OCRResult, ProcessingOptions
+from datalab_sdk.models import (
+    ConversionResult,
+    OCRResult,
+    ProcessingOptions,
+    ConvertOptions,
+    OCROptions,
+)
 from datalab_sdk.settings import settings
 
 
@@ -170,7 +176,7 @@ class AsyncDatalabClient:
     ) -> ConversionResult:
         """Convert a document using the marker endpoint"""
         if options is None:
-            options = ProcessingOptions()
+            options = ConvertOptions()
 
         initial_data = await self._make_request(
             "POST", "/api/v1/marker", data=self.get_form_params(file_path, options)
@@ -212,7 +218,7 @@ class AsyncDatalabClient:
     ) -> OCRResult:
         """Perform OCR on a document"""
         if options is None:
-            options = ProcessingOptions()
+            options = OCROptions()
 
         initial_data = await self._make_request(
             "POST", "/api/v1/ocr", data=self.get_form_params(file_path, options)
