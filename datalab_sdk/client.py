@@ -166,7 +166,7 @@ class AsyncDatalabClient:
                 "file", file_data, filename=filename, content_type=mime_type
             )
         else:
-            raise DatalabAPIError("Either file_path or file_url must be provided")
+            raise ValueError("Either file_path or file_url must be provided")
 
         if options:
             for key, value in options.to_form_data().items():
