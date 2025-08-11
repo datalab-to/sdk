@@ -44,7 +44,6 @@ class ConvertOptions(ProcessingOptions):
     use_llm: bool = False
     strip_existing_ocr: bool = False
     disable_image_extraction: bool = False
-    use_cache: bool = True
     block_correction_prompt: Optional[str] = None
     additional_config: Optional[Dict[str, Any]] = None
     page_schema: Optional[Dict[str, Any]] = None
