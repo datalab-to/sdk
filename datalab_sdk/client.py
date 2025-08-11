@@ -151,26 +151,37 @@ class AsyncDatalabClient:
 
         return file_path.name, file_path.read_bytes(), mime_type
 
-    def get_form_params(self, file_path, options):
-        filename, file_data, mime_type = self._prepare_file_data(file_path)
-
+    def get_form_params(self, file_path=None, file_url=None, options=None):
         form_data = aiohttp.FormData()
-        form_data.add_field(
-            "file", file_data, filename=filename, content_type=mime_type
-        )
 
-        for key, value in options.to_form_data().items():
-            if isinstance(value, tuple):
-                form_data.add_field(key, str(value[1]))
-            else:
-                form_data.add_field(key, str(value))
+        if file_url and file_path:
+            raise ValueError("Either file_path or file_url must be provided, not both.")
+        
+        # Use either file_url or file upload, not both
+        if file_url:
+            form_data.add_field("file_url", file_url)
+        elif file_path:
+            filename, file_data, mime_type = self._prepare_file_data(file_path)
+            form_data.add_field(
+                "file", file_data, filename=filename, content_type=mime_type
+            )
+        else:
+            raise DatalabAPIError("Either file_path or file_url must be provided")
+
+        if options:
+            for key, value in options.to_form_data().items():
+                if isinstance(value, tuple):
+                    form_data.add_field(key, str(value[1]))
+                else:
+                    form_data.add_field(key, str(value))
 
         return form_data
 
     # Convenient endpoint-specific methods
     async def convert(
         self,
-        file_path: Union[str, Path],
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
     ) -> ConversionResult:
@@ -179,7 +190,7 @@ class AsyncDatalabClient:
             options = ConvertOptions()
 
         initial_data = await self._make_request(
-            "POST", "/api/v1/marker", data=self.get_form_params(file_path, options)
+            "POST", "/api/v1/marker", data=self.get_form_params(file_path=file_path, file_url=file_url, options=options)
         )
 
         if not initial_data.get("success"):
@@ -221,7 +232,7 @@ class AsyncDatalabClient:
             options = OCROptions()
 
         initial_data = await self._make_request(
-            "POST", "/api/v1/ocr", data=self.get_form_params(file_path, options)
+            "POST", "/api/v1/ocr", data=self.get_form_params(file_path=file_path, options=options)
         )
 
         if not initial_data.get("success"):
@@ -283,13 +294,14 @@ class DatalabClient:
 
     def convert(
         self,
-        file_path: Union[str, Path],
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
     ) -> ConversionResult:
         """Convert a document using the marker endpoint (sync version)"""
         return self._run_async(
-            self._async_client.convert(file_path, options, save_output)
+            self._async_client.convert(file_path=file_path, file_url=file_url, options=options, save_output=save_output)
         )
 
     def ocr(
