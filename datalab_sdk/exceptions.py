@@ -13,7 +13,7 @@ class DatalabAPIError(DatalabError):
     """Exception raised when the API returns an error response"""
 
     def __init__(
-        self, message: str, status_code: int = None, response_data: dict = None
+        self, message: str, status_code: int|None = None, response_data: dict|None = None
     ):
         super().__init__(message)
         self.status_code = status_code
