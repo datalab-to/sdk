@@ -3,7 +3,7 @@ Tests for the convert and ocr methods of the client
 """
 
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, Mock
 import json
 
 from datalab_sdk import DatalabClient, AsyncDatalabClient
@@ -151,10 +151,10 @@ class TestConvertMethod:
         client = DatalabClient(api_key="test-key")
 
         with patch.object(
-            client._async_client, "_make_request", new_callable=AsyncMock
+            client, "_make_request", new_callable=Mock
         ) as mock_request:
             with patch.object(
-                client._async_client, "_poll_result", new_callable=AsyncMock
+                client, "_poll_result", new_callable=Mock
             ) as mock_poll:
                 # Setup mocks
                 mock_request.return_value = mock_initial_response
@@ -329,10 +329,10 @@ class TestOCRMethod:
         client = DatalabClient(api_key="test-key")
 
         with patch.object(
-            client._async_client, "_make_request", new_callable=AsyncMock
+            client, "_make_request", new_callable=Mock
         ) as mock_request:
             with patch.object(
-                client._async_client, "_poll_result", new_callable=AsyncMock
+                client, "_poll_result", new_callable=Mock
             ) as mock_poll:
                 # Setup mocks
                 mock_request.return_value = mock_initial_response
@@ -406,7 +406,7 @@ class TestClientErrorHandling:
         client = DatalabClient(api_key="test-key")
 
         with patch.object(
-            client._async_client, "_make_request", new_callable=AsyncMock
+            client, "_make_request", new_callable=Mock
         ) as mock_request:
             # Setup mock
             mock_request.return_value = mock_initial_response
