@@ -64,6 +64,7 @@ class ConversionResult:
     markdown: Optional[str] = None
     html: Optional[str] = None
     json: Optional[Dict[str, Any]] = None
+    extraction_schema_json: Optional[str] = None
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -88,6 +89,10 @@ class ConversionResult:
         if self.json:
             with open(output_path.with_suffix(".json"), "w", encoding="utf-8") as f:
                 json.dump(self.json, f, indent=2)
+
+        if self.extraction_schema_json:
+            with open(output_path.with_suffix("_extraction_results.json"), "w", encoding="utf-8") as f:
+                f.write(self.extraction_schema_json)
 
         # Save images if present
         if save_images and self.images:
