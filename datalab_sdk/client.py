@@ -156,7 +156,7 @@ class AsyncDatalabClient:
 
         if file_url and file_path:
             raise ValueError("Either file_path or file_url must be provided, not both.")
-        
+
         # Use either file_url or file upload, not both
         if file_url:
             form_data.add_field("file_url", file_url)
@@ -184,13 +184,19 @@ class AsyncDatalabClient:
         file_url: Optional[str] = None,
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
     ) -> ConversionResult:
         """Convert a document using the marker endpoint"""
         if options is None:
             options = ConvertOptions()
 
         initial_data = await self._make_request(
-            "POST", "/api/v1/marker", data=self.get_form_params(file_path=file_path, file_url=file_url, options=options)
+            "POST",
+            "/api/v1/marker",
+            data=self.get_form_params(
+                file_path=file_path, file_url=file_url, options=options
+            ),
         )
 
         if not initial_data.get("success"):
@@ -198,7 +204,11 @@ class AsyncDatalabClient:
                 f"Request failed: {initial_data.get('error', 'Unknown error')}"
             )
 
-        result_data = await self._poll_result(initial_data["request_check_url"])
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
 
         result = ConversionResult(
             success=result_data.get("success", False),
@@ -227,13 +237,17 @@ class AsyncDatalabClient:
         file_path: Union[str, Path],
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
     ) -> OCRResult:
         """Perform OCR on a document"""
         if options is None:
             options = OCROptions()
 
         initial_data = await self._make_request(
-            "POST", "/api/v1/ocr", data=self.get_form_params(file_path=file_path, options=options)
+            "POST",
+            "/api/v1/ocr",
+            data=self.get_form_params(file_path=file_path, options=options),
         )
 
         if not initial_data.get("success"):
@@ -241,7 +255,11 @@ class AsyncDatalabClient:
                 f"Request failed: {initial_data.get('error', 'Unknown error')}"
             )
 
-        result_data = await self._poll_result(initial_data["request_check_url"])
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
 
         result = OCRResult(
             success=result_data.get("success", False),
@@ -299,10 +317,19 @@ class DatalabClient:
         file_url: Optional[str] = None,
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
     ) -> ConversionResult:
         """Convert a document using the marker endpoint (sync version)"""
         return self._run_async(
-            self._async_client.convert(file_path=file_path, file_url=file_url, options=options, save_output=save_output)
+            self._async_client.convert(
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
         )
 
     def ocr(
@@ -310,6 +337,16 @@ class DatalabClient:
         file_path: Union[str, Path],
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
     ) -> OCRResult:
         """Perform OCR on a document (sync version)"""
-        return self._run_async(self._async_client.ocr(file_path, options, save_output))
+        return self._run_async(
+            self._async_client.ocr(
+                file_path=file_path,
+                options=options,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
