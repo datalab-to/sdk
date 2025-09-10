@@ -6,7 +6,7 @@ import asyncio
 import mimetypes
 import aiohttp
 from tenacity import (
-    AsyncRetrying,
+    retry,
     retry_if_exception,
     retry_if_exception_type,
     stop_after_attempt,
@@ -126,31 +126,7 @@ class AsyncDatalabClient:
         )
 
         for i in range(max_polls):
-            # Retry transient failures for the polling GET using tenacity
-            async for attempt in AsyncRetrying(
-                retry=(
-                    retry_if_exception_type(DatalabTimeoutError)
-                    | retry_if_exception(
-                        lambda e: isinstance(e, DatalabAPIError)
-                        and (
-                            # retry request timeout or too many requests
-                            getattr(e, "status_code", None) in (408, 429)
-                            or (
-                                # or if there's a server error
-                                getattr(e, "status_code", None) is not None
-                                and getattr(e, "status_code") >= 500
-                            )
-                            # or datalab api error without status code
-                            or getattr(e, "status_code", None) is None
-                        )
-                    )
-                ),
-                stop=stop_after_attempt(2),
-                wait=wait_exponential_jitter(max=0.5),
-                reraise=True,
-            ):
-                with attempt:
-                    data = await self._make_request("GET", full_url)
+            data = await self._poll_get_with_retry(full_url)
 
             if data.get("status") == "complete":
                 return data
@@ -165,6 +141,32 @@ class AsyncDatalabClient:
         raise DatalabTimeoutError(
             f"Polling timed out after {max_polls * poll_interval} seconds"
         )
+
+    @retry(
+        retry=(
+            retry_if_exception_type(DatalabTimeoutError)
+            | retry_if_exception(
+                lambda e: isinstance(e, DatalabAPIError)
+                and (
+                    # retry request timeout or too many requests
+                    getattr(e, "status_code", None) in (408, 429)
+                    or (
+                        # or if there's a server error
+                        getattr(e, "status_code", None) is not None
+                        and getattr(e, "status_code") >= 500
+                    )
+                    # or datalab api error without status code (e.g., connection errors)
+                    or getattr(e, "status_code", None) is None
+                )
+            )
+        ),
+        stop=stop_after_attempt(2),
+        wait=wait_exponential_jitter(max=0.5),
+        reraise=True,
+    )
+    async def _poll_get_with_retry(self, url: str) -> Dict[str, Any]:
+        """GET wrapper for polling with scoped retries for transient failures"""
+        return await self._make_request("GET", url)
 
     def _prepare_file_data(self, file_path: Union[str, Path]) -> tuple:
         """Prepare file data for upload"""
