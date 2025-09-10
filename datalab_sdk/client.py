@@ -5,6 +5,13 @@ Datalab API client - async core with sync wrapper
 import asyncio
 import mimetypes
 import aiohttp
+from tenacity import (
+    retry,
+    retry_if_exception,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential_jitter,
+)
 from pathlib import Path
 from typing import Union, Optional, Dict, Any
 
@@ -119,7 +126,7 @@ class AsyncDatalabClient:
         )
 
         for i in range(max_polls):
-            data = await self._make_request("GET", full_url)
+            data = await self._poll_get_with_retry(full_url)
 
             if data.get("status") == "complete":
                 return data
@@ -134,6 +141,32 @@ class AsyncDatalabClient:
         raise DatalabTimeoutError(
             f"Polling timed out after {max_polls * poll_interval} seconds"
         )
+
+    @retry(
+        retry=(
+            retry_if_exception_type(DatalabTimeoutError)
+            | retry_if_exception(
+                lambda e: isinstance(e, DatalabAPIError)
+                and (
+                    # retry request timeout or too many requests
+                    getattr(e, "status_code", None) in (408, 429)
+                    or (
+                        # or if there's a server error
+                        getattr(e, "status_code", None) is not None
+                        and getattr(e, "status_code") >= 500
+                    )
+                    # or datalab api error without status code (e.g., connection errors)
+                    or getattr(e, "status_code", None) is None
+                )
+            )
+        ),
+        stop=stop_after_attempt(2),
+        wait=wait_exponential_jitter(max=0.5),
+        reraise=True,
+    )
+    async def _poll_get_with_retry(self, url: str) -> Dict[str, Any]:
+        """GET wrapper for polling with scoped retries for transient failures"""
+        return await self._make_request("GET", url)
 
     def _prepare_file_data(self, file_path: Union[str, Path]) -> tuple:
         """Prepare file data for upload"""
@@ -156,7 +189,7 @@ class AsyncDatalabClient:
 
         if file_url and file_path:
             raise ValueError("Either file_path or file_url must be provided, not both.")
-        
+
         # Use either file_url or file upload, not both
         if file_url:
             form_data.add_field("file_url", file_url)
@@ -184,13 +217,19 @@ class AsyncDatalabClient:
         file_url: Optional[str] = None,
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
     ) -> ConversionResult:
         """Convert a document using the marker endpoint"""
         if options is None:
             options = ConvertOptions()
 
         initial_data = await self._make_request(
-            "POST", "/api/v1/marker", data=self.get_form_params(file_path=file_path, file_url=file_url, options=options)
+            "POST",
+            "/api/v1/marker",
+            data=self.get_form_params(
+                file_path=file_path, file_url=file_url, options=options
+            ),
         )
 
         if not initial_data.get("success"):
@@ -198,7 +237,11 @@ class AsyncDatalabClient:
                 f"Request failed: {initial_data.get('error', 'Unknown error')}"
             )
 
-        result_data = await self._poll_result(initial_data["request_check_url"])
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
 
         result = ConversionResult(
             success=result_data.get("success", False),
@@ -227,13 +270,17 @@ class AsyncDatalabClient:
         file_path: Union[str, Path],
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
     ) -> OCRResult:
         """Perform OCR on a document"""
         if options is None:
             options = OCROptions()
 
         initial_data = await self._make_request(
-            "POST", "/api/v1/ocr", data=self.get_form_params(file_path=file_path, options=options)
+            "POST",
+            "/api/v1/ocr",
+            data=self.get_form_params(file_path=file_path, options=options),
         )
 
         if not initial_data.get("success"):
@@ -241,7 +288,11 @@ class AsyncDatalabClient:
                 f"Request failed: {initial_data.get('error', 'Unknown error')}"
             )
 
-        result_data = await self._poll_result(initial_data["request_check_url"])
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
 
         result = OCRResult(
             success=result_data.get("success", False),
@@ -299,10 +350,19 @@ class DatalabClient:
         file_url: Optional[str] = None,
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
     ) -> ConversionResult:
         """Convert a document using the marker endpoint (sync version)"""
         return self._run_async(
-            self._async_client.convert(file_path=file_path, file_url=file_url, options=options, save_output=save_output)
+            self._async_client.convert(
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
         )
 
     def ocr(
@@ -310,6 +370,16 @@ class DatalabClient:
         file_path: Union[str, Path],
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
     ) -> OCRResult:
         """Perform OCR on a document (sync version)"""
-        return self._run_async(self._async_client.ocr(file_path, options, save_output))
+        return self._run_async(
+            self._async_client.ocr(
+                file_path=file_path,
+                options=options,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
