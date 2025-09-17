@@ -6,6 +6,7 @@ python/examples
 e2e.sh
 TODO.md
 .vscode/
+.DS_Store
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

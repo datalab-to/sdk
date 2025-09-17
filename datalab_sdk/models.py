@@ -47,7 +47,8 @@ class ConvertOptions(ProcessingOptions):
     block_correction_prompt: Optional[str] = None
     additional_config: Optional[Dict[str, Any]] = None
     page_schema: Optional[Dict[str, Any]] = None
-    output_format: str = "markdown"  # markdown, json, html
+    output_format: str = "markdown"  # markdown, json, html, chunks
+    mode: str = "fast"  # fast, balanced, accurate
 
 
 @dataclass
@@ -91,7 +92,11 @@ class ConversionResult:
                 json.dump(self.json, f, indent=2)
 
         if self.extraction_schema_json:
-            with open(output_path.with_suffix("_extraction_results.json"), "w", encoding="utf-8") as f:
+            with open(
+                output_path.with_suffix("_extraction_results.json"),
+                "w",
+                encoding="utf-8",
+            ) as f:
                 f.write(self.extraction_schema_json)
 
         # Save images if present

@@ -62,6 +62,14 @@ class TestMarkerIntegration:
         assert len(result.html) > 0
         assert result.output_format == "html"
 
+    def test_convert_pdf_high_accuracy(self):
+        client = DatalabClient()
+        pdf_file = DATA_DIR / "adversarial.pdf"
+        options = ConvertOptions(mode="accurate", max_pages=1)
+        result = client.convert(pdf_file, options=options)
+
+        assert "subspace" in result.markdown.lower()
+
     @pytest.mark.asyncio
     async def test_convert_async_with_json(self):
         """Test async conversion with JSON output"""
