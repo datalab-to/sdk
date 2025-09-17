@@ -28,6 +28,7 @@ test = [
     "pytest-mock>=3.11.0",
     "pytest-cov>=4.1.0",
     "aiofiles>=23.2.0",
+    "pytest-xdist>=3.8.0",
 ]
 
 [build-system]
