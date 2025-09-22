@@ -249,6 +249,7 @@ class AsyncDatalabClient:
             markdown=result_data.get("markdown"),
             html=result_data.get("html"),
             json=result_data.get("json"),
+            chunks=result_data.get("chunks"),
             extraction_schema_json=result_data.get("extraction_schema_json"),
             images=result_data.get("images"),
             metadata=result_data.get("metadata"),
