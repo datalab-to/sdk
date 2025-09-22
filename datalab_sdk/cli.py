@@ -57,7 +57,7 @@ def marker_options(func):
         "--format",
         "output_format",
         default="markdown",
-        type=click.Choice(["markdown", "html", "json"]),
+        type=click.Choice(["markdown", "html", "json", "chunks"]),
         help="Output format",
     )(func)
     func = click.option("--force_ocr", is_flag=True, help="Force OCR on every page")(
