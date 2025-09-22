@@ -65,6 +65,7 @@ class ConversionResult:
     markdown: Optional[str] = None
     html: Optional[str] = None
     json: Optional[Dict[str, Any]] = None
+    chunks: Optional[Dict[str, Any]] = None
     extraction_schema_json: Optional[str] = None
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -90,6 +91,10 @@ class ConversionResult:
         if self.json:
             with open(output_path.with_suffix(".json"), "w", encoding="utf-8") as f:
                 json.dump(self.json, f, indent=2)
+
+        if self.chunks:
+            with open(output_path.with_suffix(".chunks.json"), "w", encoding="utf-8") as f:
+                json.dump(self.chunks, f, indent=2)
 
         if self.extraction_schema_json:
             with open(

@@ -89,6 +89,7 @@ class TestConvertMethod:
             "markdown": "# Test Document\n\nThis is a test document.",
             "html": None,
             "json": None,
+            "chunks": {"some_content": True},
             "images": {},
             "metadata": {"pages": 1},
             "error": "",
@@ -114,12 +115,16 @@ class TestConvertMethod:
                     # Verify result
                     assert result.success is True
 
-                    # Verify file was saved
+                    # Verify Markdown file was saved
                     assert (output_path.with_suffix(".md")).exists()
                     saved_content = (output_path.with_suffix(".md")).read_text()
                     assert (
                         saved_content == "# Test Document\n\nThis is a test document."
                     )
+
+                    assert (output_path.with_suffix(".chunks.json")).exists()
+                    saved_chunks = json.loads((output_path.with_suffix(".chunks.json")).read_text())
+                    assert saved_chunks == {"some_content": True}
 
     def test_convert_sync_with_processing_options(self, temp_dir):
         """Test synchronous conversion with processing options"""
