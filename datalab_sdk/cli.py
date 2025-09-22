@@ -42,6 +42,12 @@ def common_options(func):
     func = click.option("--skip_cache", help="Skip the cache when running inference")(
         func
     )
+    func = click.option(
+        "--max_polls", default=300, type=int, help="Maximum number of polling attempts"
+    )(func)
+    func = click.option(
+        "--poll_interval", default=1, type=int, help="Polling interval in seconds"
+    )(func)
     return func
 
 
@@ -106,6 +112,8 @@ async def process_files_async(
     max_concurrent: int = 5,
     api_key: str | None = None,
     base_url: str | None = None,
+    max_polls: int = 300,
+    poll_interval: int = 1,
 ) -> List[dict]:
     """Process files asynchronously"""
     semaphore = asyncio.Semaphore(max_concurrent)
@@ -124,11 +132,13 @@ async def process_files_async(
                 ) as client:
                     if method == "convert":
                         result = await client.convert(
-                            file_path, options=options, save_output=output_path
+                            file_path, options=options, save_output=output_path,
+                            max_polls=max_polls, poll_interval=poll_interval
                         )
                     else:  # method == 'ocr'
                         result = await client.ocr(
-                            file_path, options=options, save_output=output_path
+                            file_path, options=options, save_output=output_path,
+                            max_polls=max_polls, poll_interval=poll_interval
                         )
 
                 return {
@@ -218,6 +228,8 @@ def process_documents(
     base_url: str,
     page_range: Optional[str],
     skip_cache: bool,
+    max_polls: int,
+    poll_interval: int,
     # Convert-specific options
     output_format: Optional[str] = None,
     force_ocr: bool = False,
@@ -288,6 +300,8 @@ def process_documents(
                 max_concurrent=max_concurrent,
                 api_key=api_key,
                 base_url=base_url,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
             )
         )
 
@@ -320,6 +334,8 @@ def convert(
     base_url: str,
     page_range: Optional[str],
     skip_cache: bool,
+    max_polls: int,
+    poll_interval: int,
     output_format: str,
     force_ocr: bool,
     format_lines: bool,
@@ -342,6 +358,8 @@ def convert(
         base_url=base_url,
         page_range=page_range,
         skip_cache=skip_cache,
+        max_polls=max_polls,
+        poll_interval=poll_interval,
         output_format=output_format,
         force_ocr=force_ocr,
         format_lines=format_lines,
@@ -367,6 +385,8 @@ def ocr(
     base_url: str,
     page_range: Optional[str],
     skip_cache: bool,
+    max_polls: int,
+    poll_interval: int,
 ):
     """Perform OCR on documents"""
     process_documents(
@@ -380,6 +400,8 @@ def ocr(
         base_url=base_url,
         page_range=page_range,
         skip_cache=skip_cache,
+        max_polls=max_polls,
+        poll_interval=poll_interval,
     )
 
 

@@ -13,7 +13,7 @@ import base64
 class ProcessingOptions:
     # Common options
     max_pages: Optional[int] = None
-    skip_cache: bool = True
+    skip_cache: bool = False
     page_range: Optional[str] = None
 
     def to_form_data(self) -> Dict[str, Any]:
