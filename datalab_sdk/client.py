@@ -384,3 +384,58 @@ class DatalabClient:
                 poll_interval=poll_interval,
             )
         )
+
+    def process_collection(
+        self,
+        collection: "Collection",
+        method: str = "convert",
+        options: Optional[ProcessingOptions] = None,
+        output_dir: Optional[Union[str, Path]] = None,
+        max_concurrent: int = 5,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> "CollectionResult":
+        """Process a collection of documents (sync version)"""
+        return self._run_async(
+            self._process_collection_async(
+                collection=collection,
+                method=method,
+                options=options,
+                output_dir=output_dir,
+                max_concurrent=max_concurrent,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    async def _process_collection_async(
+        self,
+        collection: "Collection",
+        method: str = "convert",
+        options: Optional[ProcessingOptions] = None,
+        output_dir: Optional[Union[str, Path]] = None,
+        max_concurrent: int = 5,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> "CollectionResult":
+        """Internal async method for processing collections"""
+        if method == "convert":
+            return await collection.convert_all(
+                client=self._async_client,
+                options=options,
+                output_dir=output_dir,
+                max_concurrent=max_concurrent,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        elif method == "ocr":
+            return await collection.ocr_all(
+                client=self._async_client,
+                options=options,
+                output_dir=output_dir,
+                max_concurrent=max_concurrent,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        else:
+            raise ValueError(f"Unsupported method: {method}. Use 'convert' or 'ocr'")

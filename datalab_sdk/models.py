@@ -7,6 +7,8 @@ from typing import Dict, List, Optional, Any, Union
 from pathlib import Path
 import json
 import base64
+import asyncio
+from urllib.parse import urlparse
 
 
 @dataclass

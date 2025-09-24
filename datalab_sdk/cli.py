@@ -13,6 +13,7 @@ import click
 from datalab_sdk.client import AsyncDatalabClient
 from datalab_sdk.mimetypes import SUPPORTED_EXTENSIONS
 from datalab_sdk.models import OCROptions, ConvertOptions, ProcessingOptions
+from datalab_sdk.collections import Collection
 from datalab_sdk.exceptions import DatalabError
 from datalab_sdk.settings import settings
 
@@ -405,9 +406,147 @@ def ocr(
     )
 
 
+@click.command()
+@click.option("--name", required=True, help="Collection name")
+@click.option("--source-type", type=click.Choice(["directory", "s3", "urls"]), required=True, help="Source type")
+@click.option("--source", required=True, help="Source path/URI")
+@click.option("--method", type=click.Choice(["convert", "ocr"]), default="convert", help="Processing method")
+@common_options
+@marker_options
+def collection(
+    name: str,
+    source_type: str,
+    source: str,
+    method: str,
+    api_key: str,
+    output_dir: str,
+    max_pages: Optional[int],
+    extensions: Optional[str],
+    max_concurrent: int,
+    base_url: str,
+    page_range: Optional[str],
+    skip_cache: bool,
+    max_polls: int,
+    poll_interval: int,
+    output_format: str,
+    force_ocr: bool,
+    format_lines: bool,
+    paginate: bool,
+    use_llm: bool,
+    strip_existing_ocr: bool,
+    disable_image_extraction: bool,
+    block_correction_prompt: Optional[str],
+    page_schema: Optional[str],
+):
+    """Process a collection of documents"""
+    try:
+        # Validate inputs
+        if api_key is None:
+            api_key = settings.DATALAB_API_KEY
+
+        if api_key is None:
+            raise DatalabError(
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+            )
+
+        output_dir = setup_output_directory(output_dir)
+        file_extensions = parse_extensions(extensions)
+
+        # Create collection based on source type
+        click.echo(f"🔄 Creating collection '{name}' from {source_type}: {source}")
+
+        if source_type == "directory":
+            collection_obj = Collection.from_local_directory(
+                name=name,
+                directory=source,
+                extensions=file_extensions
+            )
+        elif source_type == "s3":
+            collection_obj = Collection.from_s3_prefix(
+                name=name,
+                s3_uri=source,
+                extensions=file_extensions
+            )
+        elif source_type == "urls":
+            # Parse comma-separated URLs
+            urls = [url.strip() for url in source.split(",")]
+            collection_obj = Collection.from_urls(name=name, file_urls=urls)
+        else:
+            raise DatalabError(f"Unsupported source type: {source_type}")
+
+        click.echo(f"📂 Found {len(collection_obj.sources)} files in collection")
+
+        # Create processing options
+        if method == "convert":
+            options = ConvertOptions(
+                output_format=output_format,
+                max_pages=max_pages,
+                force_ocr=force_ocr,
+                format_lines=format_lines,
+                paginate=paginate,
+                use_llm=use_llm,
+                strip_existing_ocr=strip_existing_ocr,
+                disable_image_extraction=disable_image_extraction,
+                page_range=page_range,
+                block_correction_prompt=block_correction_prompt,
+                skip_cache=skip_cache,
+                page_schema=page_schema,
+            )
+        else:  # method == "ocr"
+            options = OCROptions(
+                max_pages=max_pages,
+                page_range=page_range,
+                skip_cache=skip_cache,
+            )
+
+        # Process collection
+        async def process_collection_async():
+            async with AsyncDatalabClient(api_key=api_key, base_url=base_url) as client:
+                if method == "convert":
+                    result = await collection_obj.convert_all(
+                        client=client,
+                        options=options,
+                        output_dir=output_dir,
+                        max_concurrent=max_concurrent,
+                        max_polls=max_polls,
+                        poll_interval=poll_interval
+                    )
+                else:  # method == "ocr"
+                    result = await collection_obj.ocr_all(
+                        client=client,
+                        options=options,
+                        output_dir=output_dir,
+                        max_concurrent=max_concurrent,
+                        max_polls=max_polls,
+                        poll_interval=poll_interval
+                    )
+                return result
+
+        result = asyncio.run(process_collection_async())
+
+        # Show results
+        click.echo(f"\n📊 Collection '{name}' {method.title()} Summary:")
+        click.echo(f"   ✅ Successfully processed: {result.successful} files")
+        if result.failed > 0:
+            click.echo(f"   ❌ Failed: {result.failed} files")
+            click.echo("\n   Failed files:")
+            for error in result.errors:
+                click.echo(f"      - {error['source']}: {error['error']}")
+
+        click.echo(f"\n📁 Output saved to: {output_dir}")
+
+    except DatalabError as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Unexpected error: {e}", err=True)
+        sys.exit(1)
+
+
 # Add commands to CLI group
 cli.add_command(convert)
 cli.add_command(ocr)
+cli.add_command(collection)
 
 if __name__ == "__main__":
     cli()

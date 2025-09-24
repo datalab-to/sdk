@@ -8,6 +8,7 @@ supporting document conversion, OCR, layout analysis, and table recognition.
 from .client import DatalabClient, AsyncDatalabClient
 from .exceptions import DatalabError, DatalabAPIError, DatalabTimeoutError
 from .models import ConversionResult, OCRResult, ConvertOptions, OCROptions
+from .collections import Collection, CollectionResult
 from .settings import settings
 
 __version__ = settings.VERSION
@@ -21,4 +22,6 @@ __all__ = [
     "OCRResult",
     "ConvertOptions",
     "OCROptions",
+    "Collection",
+    "CollectionResult",
 ]
