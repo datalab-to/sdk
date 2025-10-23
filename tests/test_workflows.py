@@ -67,7 +67,7 @@ class TestWorkflowMethods:
 
                 # Create workflow
                 workflow = await client.create_workflow(
-                    name="Test Workflow", team_id=12, steps=steps
+                    name="Test Workflow", steps=steps
                 )
 
                 # Verify result
@@ -195,15 +195,17 @@ class TestWorkflowMethods:
     async def test_get_execution_status_success(self):
         """Test checking execution status"""
         mock_response = {
-            "id": 1,
+            "execution_id": 1,
             "workflow_id": 1,
-            "status": "complete",
-            "success": True,
-            "input_config": {"type": "single_file", "file_url": "https://example.com/test.pdf"},
-            "results": {"output": "test result"},
-            "error": None,
-            "created_at": "2024-01-01T00:00:00Z",
-            "completed_at": "2024-01-01T00:01:00Z",
+            "status": "COMPLETED",
+            "steps": {
+                "step1": {
+                    "status": "COMPLETED",
+                    "output_url": "https://example.com/output.json"
+                }
+            },
+            "created": "2024-01-01T00:00:00Z",
+            "updated": "2024-01-01T00:01:00Z",
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
@@ -215,7 +217,7 @@ class TestWorkflowMethods:
                 # Verify result
                 assert isinstance(execution, WorkflowExecution)
                 assert execution.id == 1
-                assert execution.status == "complete"
+                assert execution.status == "COMPLETED"
                 assert execution.success is True
 
     @pytest.mark.asyncio
@@ -223,26 +225,26 @@ class TestWorkflowMethods:
         """Test polling execution status until completion"""
         # First status check: still processing
         mock_status_processing = {
-            "id": 1,
+            "execution_id": 1,
             "workflow_id": 1,
-            "status": "processing",
-            "success": True,
-            "input_config": {"type": "single_file", "file_url": "https://example.com/test.pdf"},
-            "results": None,
-            "error": None,
+            "status": "IN_PROGRESS",
+            "steps": {},
+            "created": "2024-01-01T00:00:00Z",
         }
 
         # Second status check: complete
         mock_status_complete = {
-            "id": 1,
+            "execution_id": 1,
             "workflow_id": 1,
-            "status": "complete",
-            "success": True,
-            "input_config": {"type": "single_file", "file_url": "https://example.com/test.pdf"},
-            "results": {"output": "test result"},
-            "error": None,
-            "created_at": "2024-01-01T00:00:00Z",
-            "completed_at": "2024-01-01T00:01:00Z",
+            "status": "COMPLETED",
+            "steps": {
+                "step1": {
+                    "status": "COMPLETED",
+                    "output_url": "https://example.com/output.json"
+                }
+            },
+            "created": "2024-01-01T00:00:00Z",
+            "updated": "2024-01-01T00:01:00Z",
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
@@ -258,24 +260,27 @@ class TestWorkflowMethods:
                 )
 
                 # Verify result
-                assert execution.status == "complete"
+                assert execution.status == "COMPLETED"
                 assert execution.success is True
-                assert execution.results == {"output": "test result"}
+                assert "step1" in execution.results
                 assert mock_request.call_count == 2  # 2 status checks
 
     @pytest.mark.asyncio
     async def test_get_execution_status_failed(self):
         """Test checking execution status when workflow fails"""
         mock_status_failed = {
-            "id": 1,
+            "execution_id": 1,
             "workflow_id": 1,
-            "status": "failed",
-            "success": False,
-            "input_config": {"type": "single_file", "file_url": "https://example.com/test.pdf"},
-            "results": None,
+            "status": "FAILED",
+            "steps": {
+                "step1": {
+                    "status": "FAILED",
+                    "error": "Step processing failed"
+                }
+            },
             "error": "Processing error occurred",
-            "created_at": "2024-01-01T00:00:00Z",
-            "completed_at": "2024-01-01T00:01:00Z",
+            "created": "2024-01-01T00:00:00Z",
+            "updated": "2024-01-01T00:01:00Z",
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
@@ -285,7 +290,7 @@ class TestWorkflowMethods:
                 execution = await client.get_execution_status(execution_id=1)
 
                 # Verify result shows failure
-                assert execution.status == "failed"
+                assert execution.status == "FAILED"
                 assert execution.success is False
                 assert execution.error == "Processing error occurred"
 
@@ -324,7 +329,7 @@ class TestSyncWorkflowClient:
         ) as mock_request:
             mock_request.return_value = mock_response
 
-            workflow = client.create_workflow(name="Test Workflow", team_id=12, steps=steps)
+            workflow = client.create_workflow(name="Test Workflow", steps=steps)
 
             assert isinstance(workflow, Workflow)
             assert workflow.id == 1
