@@ -27,6 +27,10 @@ from datalab_sdk.models import (
     ProcessingOptions,
     ConvertOptions,
     OCROptions,
+    Workflow,
+    WorkflowStep,
+    WorkflowExecution,
+    InputConfig,
 )
 from datalab_sdk.settings import settings
 
@@ -311,6 +315,284 @@ class AsyncDatalabClient:
 
         return result
 
+    # Workflow methods
+    async def create_workflow(
+        self,
+        name: str,
+        steps: list[WorkflowStep],
+    ) -> Workflow:
+        """
+        Create a new workflow
+
+        Args:
+            name: Name of the workflow
+            steps: List of workflow steps
+
+        Returns:
+            Workflow object with ID and metadata
+        """
+        workflow_data = {
+            "name": name,
+            "steps": [step.to_dict() for step in steps],
+        }
+
+        response = await self._make_request(
+            "POST",
+            "/api/v1/workflows/workflows",
+            json=workflow_data,
+        )
+
+        # Parse response into Workflow object
+        workflow_steps = [
+            WorkflowStep(
+                # step_key=step["step_key"],    # TODO: Fix API
+                unique_name=step["unique_name"],
+                settings=step["settings"],
+                depends_on=step.get("depends_on", []),
+            )
+            for step in response.get("steps", [])
+        ]
+
+        return Workflow(
+            id=response.get("id"),
+            name=response["name"],
+            team_id=response["team_id"],
+            steps=workflow_steps,
+            created_at=response.get("created_at"),
+            updated_at=response.get("updated_at"),
+        )
+
+    async def get_workflow(self, workflow_id: int) -> Workflow:
+        """
+        Get a workflow by ID
+
+        Args:
+            workflow_id: ID of the workflow to retrieve
+
+        Returns:
+            Workflow object
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/workflows/workflows/{workflow_id}",
+        )
+
+        workflow_steps = [
+            WorkflowStep(
+                step_key=step["step_key"],
+                unique_name=step["unique_name"],
+                settings=step["settings"],
+                depends_on=step.get("depends_on", []),
+            )
+            for step in response.get("steps", [])
+        ]
+
+        return Workflow(
+            id=response.get("id"),
+            name=response["name"],
+            team_id=response["team_id"],
+            steps=workflow_steps,
+            created_at=response.get("created_at"),
+            updated_at=response.get("updated_at"),
+        )
+
+    async def list_workflows(self) -> list[Workflow]:
+        """
+        List all workflows for the authenticated user's team
+
+        Returns:
+            List of Workflow objects
+        """
+        response = await self._make_request(
+            "GET",
+            "/api/v1/workflows/workflows",
+        )
+
+        workflows = []
+        for workflow_data in response.get("workflows", []):
+            workflow_steps = [
+                WorkflowStep(
+                    step_key=step["step_key"],
+                    unique_name=step["unique_name"],
+                    settings=step["settings"],
+                    depends_on=step.get("depends_on", []),
+                )
+                for step in workflow_data.get("steps", [])
+            ]
+
+            workflows.append(
+                Workflow(
+                    id=workflow_data.get("id"),
+                    name=workflow_data["name"],
+                    team_id=workflow_data["team_id"],
+                    steps=workflow_steps,
+                    created_at=workflow_data.get("created_at"),
+                    updated_at=workflow_data.get("updated_at"),
+                )
+            )
+
+        return workflows
+
+    async def execute_workflow(
+        self,
+        workflow_id: int,
+        input_config: InputConfig,
+    ) -> WorkflowExecution:
+        """
+        Trigger a workflow execution
+
+        Args:
+            workflow_id: ID of the workflow to execute
+            input_config: Input configuration for the workflow
+
+        Returns:
+            WorkflowExecution object with initial status (typically "processing")
+            Use get_execution_status() to check completion status
+        """
+        execution_data = {
+            "input_config": input_config.to_dict(),
+        }
+
+        response = await self._make_request(
+            "POST",
+            f"/api/v1/workflows/workflows/{workflow_id}/execute",
+            json=execution_data,
+        )
+
+        execution_id = response.get("execution_id") or response.get("id")
+
+        if not execution_id:
+            raise DatalabAPIError("No execution ID returned from API")
+
+        # Return initial execution status without polling
+        return WorkflowExecution(
+            id=execution_id,
+            workflow_id=workflow_id,
+            status=response.get("status", "processing"),
+            input_config=input_config.to_dict(),
+            success=response.get("success", True),
+            results=response.get("results"),
+            error=response.get("error"),
+            created_at=response.get("created_at"),
+            completed_at=response.get("completed_at"),
+        )
+
+    async def get_execution_status(
+        self,
+        execution_id: int,
+        max_polls: int = 1,
+        poll_interval: int = 1,
+        download_results: bool = False,
+    ) -> WorkflowExecution:
+        """
+        Get the status of a workflow execution, optionally polling until completion
+
+        Args:
+            execution_id: ID of the execution to check
+            max_polls: Maximum number of polling attempts (default: 1 for single check)
+            poll_interval: Seconds between polling attempts (default: 1)
+            download_results: If True, download results from presigned URLs (default: False)
+
+        Returns:
+            WorkflowExecution object with current status and results.
+            Results will contain presigned URLs or downloaded data depending on download_results flag.
+        """
+        for i in range(max_polls):
+            response = await self._make_request(
+                "GET",
+                f"/api/v1/workflows/executions/{execution_id}",
+            )
+
+            status = response.get("status", "unknown").upper()
+
+            # API returns step results with presigned URLs
+            steps_data = response.get("steps", {})
+
+            # Optionally download results from presigned URLs
+            if download_results and steps_data and status == "COMPLETED":
+                results = await self._download_step_results(steps_data)
+            else:
+                # Keep the raw step data with URLs
+                results = steps_data
+
+            # Determine success based on status
+            success = status == "COMPLETED"
+            error = response.get("error")
+
+            # If any step failed, extract error
+            if status == "FAILED" or not success:
+                failed_steps = [
+                    name for name, step in steps_data.items()
+                    if step.get("status") == "FAILED"
+                ]
+                if failed_steps and not error:
+                    error = f"Step(s) failed: {', '.join(failed_steps)}"
+
+            execution = WorkflowExecution(
+                id=response.get("execution_id") or response.get("id") or execution_id,
+                workflow_id=response["workflow_id"],
+                status=status,
+                input_config=response.get("input_config", {}),
+                success=success,
+                results=results,
+                error=error,
+                created_at=response.get("created"),
+                completed_at=response.get("updated") if status in ("COMPLETED", "FAILED") else None,
+            )
+
+            # If complete or failed, return immediately
+            if status in ("COMPLETED", "FAILED"):
+                return execution
+
+            # Continue polling if in progress or pending
+            if i < max_polls - 1:
+                await asyncio.sleep(poll_interval)
+
+        # Return the last status even if not complete (after max_polls)
+        return execution
+
+    async def _download_step_results(self, steps_data: dict) -> dict:
+        """
+        Download results from presigned URLs for each step
+
+        Args:
+            steps_data: Dictionary of step data with output_url fields
+
+        Returns:
+            Dictionary with downloaded results for each step
+        """
+        results = {}
+
+        for step_name, step_info in steps_data.items():
+            output_url = step_info.get("output_url")
+            if output_url:
+                try:
+                    # Download from presigned URL
+                    import aiohttp
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(output_url) as resp:
+                            if resp.status == 200:
+                                content_type = resp.headers.get('Content-Type', '')
+                                if 'json' in content_type:
+                                    results[step_name] = await resp.json()
+                                else:
+                                    results[step_name] = await resp.text()
+                            else:
+                                results[step_name] = {
+                                    "error": f"Failed to download: HTTP {resp.status}",
+                                    "output_url": output_url
+                                }
+                except Exception as e:
+                    results[step_name] = {
+                        "error": f"Download failed: {str(e)}",
+                        "output_url": output_url
+                    }
+            else:
+                # Keep the step info if no URL available
+                results[step_name] = step_info
+
+        return results
+
 
 class DatalabClient:
     """Synchronous wrapper around AsyncDatalabClient"""
@@ -382,5 +664,57 @@ class DatalabClient:
                 save_output=save_output,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+            )
+        )
+
+    # Workflow methods (sync)
+    def create_workflow(
+        self,
+        name: str,
+        steps: list[WorkflowStep],
+    ) -> Workflow:
+        """Create a new workflow (sync version)"""
+        return self._run_async(
+            self._async_client.create_workflow(
+                name=name,
+                steps=steps,
+            )
+        )
+
+    def get_workflow(self, workflow_id: int) -> Workflow:
+        """Get a workflow by ID (sync version)"""
+        return self._run_async(self._async_client.get_workflow(workflow_id))
+
+    def list_workflows(self) -> list[Workflow]:
+        """List all workflows (sync version)"""
+        return self._run_async(self._async_client.list_workflows())
+
+    def execute_workflow(
+        self,
+        workflow_id: int,
+        input_config: InputConfig,
+    ) -> WorkflowExecution:
+        """Execute a workflow (sync version)"""
+        return self._run_async(
+            self._async_client.execute_workflow(
+                workflow_id=workflow_id,
+                input_config=input_config,
+            )
+        )
+
+    def get_execution_status(
+        self,
+        execution_id: int,
+        max_polls: int = 1,
+        poll_interval: int = 1,
+        download_results: bool = False,
+    ) -> WorkflowExecution:
+        """Get execution status (sync version)"""
+        return self._run_async(
+            self._async_client.get_execution_status(
+                execution_id=execution_id,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+                download_results=download_results,
             )
         )

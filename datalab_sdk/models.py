@@ -2,7 +2,7 @@
 Datalab SDK data models
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Union
 from pathlib import Path
 import json
@@ -120,6 +120,101 @@ class ConversionResult:
                 output_path.with_suffix(".metadata.json"), "w", encoding="utf-8"
             ) as f:
                 json.dump(self.metadata, f, indent=2)
+
+
+@dataclass
+class WorkflowStep:
+    """Configuration for a single workflow step"""
+
+    unique_name: str
+    settings: Dict[str, Any]
+    step_key: Optional[str] = '' # TODO: fix API
+    depends_on: List[str] = field(default_factory=list)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for API requests"""
+        return {
+            "step_key": self.step_key,
+            "unique_name": self.unique_name,
+            "settings": self.settings,
+            "depends_on": self.depends_on,
+        }
+
+
+@dataclass
+class Workflow:
+    """Represents a workflow configuration"""
+
+    name: str
+    team_id: int
+    steps: List[WorkflowStep]
+    id: Optional[int] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for API requests"""
+        data = {
+            "name": self.name,
+            "team_id": self.team_id,
+            "steps": [step.to_dict() for step in self.steps],
+        }
+        if self.id is not None:
+            data["id"] = self.id
+        return data
+
+
+@dataclass
+class InputConfig:
+    """Configuration for workflow input"""
+
+    type: str  # "single_file" or other types
+    file_url: Optional[str] = None
+    file_path: Optional[str] = None
+    additional_config: Optional[Dict[str, Any]] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for API requests"""
+        data = {"type": self.type}
+        if self.file_url:
+            data["file_url"] = self.file_url
+        if self.additional_config:
+            data.update(self.additional_config)
+        return data
+
+
+@dataclass
+class WorkflowExecution:
+    """Result from workflow execution"""
+
+    id: int
+    workflow_id: int
+    status: str  # "processing", "complete", "failed"
+    input_config: Dict[str, Any]
+    success: bool = True
+    results: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+
+    def save_output(self, output_path: Union[str, Path]) -> None:
+        """Save the execution results to a JSON file"""
+        output_path = Path(output_path)
+
+        output_data = {
+            "id": self.id,
+            "workflow_id": self.workflow_id,
+            "status": self.status,
+            "success": self.success,
+            "input_config": self.input_config,
+            "results": self.results,
+            "error": self.error,
+            "created_at": self.created_at,
+            "completed_at": self.completed_at,
+        }
+
+        with open(output_path.with_suffix(".json"), "w", encoding="utf-8") as f:
+            json.dump(output_data, f, indent=2)
 
 
 @dataclass

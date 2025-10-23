@@ -10,11 +10,18 @@ from pathlib import Path
 from typing import Optional, List
 import click
 
-from datalab_sdk.client import AsyncDatalabClient
+from datalab_sdk.client import AsyncDatalabClient, DatalabClient
 from datalab_sdk.mimetypes import SUPPORTED_EXTENSIONS
-from datalab_sdk.models import OCROptions, ConvertOptions, ProcessingOptions
+from datalab_sdk.models import (
+    OCROptions,
+    ConvertOptions,
+    ProcessingOptions,
+    WorkflowStep,
+    InputConfig,
+)
 from datalab_sdk.exceptions import DatalabError
 from datalab_sdk.settings import settings
+import json
 
 
 # Common CLI options
@@ -405,9 +412,305 @@ def ocr(
     )
 
 
+# Workflow commands
+@click.command()
+@click.option("--name", required=True, help="Name of the workflow")
+@click.option("--team_id", required=True, type=int, help="Team ID for the workflow")
+@click.option(
+    "--steps",
+    required=True,
+    help="JSON string or path to JSON file with workflow steps",
+)
+@click.option("--api_key", required=False, help="Datalab API key")
+@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+def create_workflow(
+    name: str,
+    team_id: int,
+    steps: str,
+    api_key: Optional[str],
+    base_url: str,
+):
+    """Create a new workflow"""
+    try:
+        if api_key is None:
+            api_key = settings.DATALAB_API_KEY
+
+        if api_key is None:
+            raise DatalabError(
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+            )
+
+        # Parse steps from JSON string or file
+        steps_path = Path(steps)
+        if steps_path.exists():
+            with open(steps_path, "r") as f:
+                steps_data = json.load(f)
+        else:
+            steps_data = json.loads(steps)
+
+        # Create WorkflowStep objects
+        workflow_steps = [
+            WorkflowStep(
+                step_key=step["step_key"],
+                unique_name=step["unique_name"],
+                settings=step["settings"],
+                depends_on=step.get("depends_on", []),
+            )
+            for step in steps_data
+        ]
+
+        # Create workflow
+        client = DatalabClient(api_key=api_key, base_url=base_url)
+        workflow = client.create_workflow(
+            name=name, team_id=team_id, steps=workflow_steps
+        )
+
+        click.echo(f"✅ Workflow created successfully!")
+        click.echo(f"   ID: {workflow.id}")
+        click.echo(f"   Name: {workflow.name}")
+        click.echo(f"   Team ID: {workflow.team_id}")
+        click.echo(f"   Steps: {len(workflow.steps)}")
+
+    except DatalabError as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@click.command()
+@click.option("--workflow_id", required=True, type=int, help="ID of the workflow")
+@click.option("--api_key", required=False, help="Datalab API key")
+@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+def get_workflow(workflow_id: int, api_key: Optional[str], base_url: str):
+    """Get a workflow by ID"""
+    try:
+        if api_key is None:
+            api_key = settings.DATALAB_API_KEY
+
+        if api_key is None:
+            raise DatalabError(
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+            )
+
+        client = DatalabClient(api_key=api_key, base_url=base_url)
+        workflow = client.get_workflow(workflow_id)
+
+        click.echo(f"📋 Workflow Details:")
+        click.echo(f"   ID: {workflow.id}")
+        click.echo(f"   Name: {workflow.name}")
+        click.echo(f"   Team ID: {workflow.team_id}")
+        click.echo(f"   Steps: {len(workflow.steps)}")
+        click.echo(f"   Created: {workflow.created_at}")
+        click.echo(f"   Updated: {workflow.updated_at}")
+
+        for i, step in enumerate(workflow.steps, 1):
+            click.echo(f"\n   Step {i}: {step.unique_name}")
+            click.echo(f"      Type: {step.step_key}")
+            click.echo(f"      Settings: {json.dumps(step.settings, indent=8)}")
+            if step.depends_on:
+                click.echo(f"      Depends on: {', '.join(step.depends_on)}")
+
+    except DatalabError as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@click.command()
+@click.option("--api_key", required=False, help="Datalab API key")
+@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+def list_workflows(api_key: Optional[str], base_url: str):
+    """List all workflows for your team"""
+    try:
+        if api_key is None:
+            api_key = settings.DATALAB_API_KEY
+
+        if api_key is None:
+            raise DatalabError(
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+            )
+
+        client = DatalabClient(api_key=api_key, base_url=base_url)
+        workflows = client.list_workflows()
+
+        if not workflows:
+            click.echo("No workflows found.")
+            return
+
+        click.echo(f"📋 Found {len(workflows)} workflow(s):\n")
+        for workflow in workflows:
+            click.echo(f"   ID: {workflow.id}")
+            click.echo(f"   Name: {workflow.name}")
+            click.echo(f"   Team ID: {workflow.team_id}")
+            click.echo(f"   Steps: {len(workflow.steps)}")
+            click.echo(f"   Created: {workflow.created_at}")
+            click.echo("")
+
+    except DatalabError as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@click.command()
+@click.option("--workflow_id", required=True, type=int, help="ID of the workflow")
+@click.option(
+    "--input_config",
+    required=True,
+    help="JSON string or path to JSON file with input configuration",
+)
+@click.option("--api_key", required=False, help="Datalab API key")
+@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+def execute_workflow(
+    workflow_id: int,
+    input_config: str,
+    api_key: Optional[str],
+    base_url: str,
+):
+    """Trigger a workflow execution"""
+    try:
+        if api_key is None:
+            api_key = settings.DATALAB_API_KEY
+
+        if api_key is None:
+            raise DatalabError(
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+            )
+
+        # Parse input_config from JSON string or file
+        input_path = Path(input_config)
+        if input_path.exists():
+            with open(input_path, "r") as f:
+                config_data = json.load(f)
+        else:
+            config_data = json.loads(input_config)
+
+        # Create InputConfig object
+        input_cfg = InputConfig(
+            type=config_data["type"],
+            file_url=config_data.get("file_url"),
+            file_path=config_data.get("file_path"),
+            additional_config={
+                k: v for k, v in config_data.items() if k not in ["type", "file_url", "file_path"]
+            } if len(config_data) > 1 else None,
+        )
+
+        client = DatalabClient(api_key=api_key, base_url=base_url)
+
+        click.echo(f"🚀 Triggering workflow execution for workflow {workflow_id}...")
+        execution = client.execute_workflow(
+            workflow_id=workflow_id,
+            input_config=input_cfg,
+        )
+
+        click.echo(f"\n✅ Successfully triggered workflow execution!")
+        click.echo(f"   Execution ID: {execution.id}")
+        click.echo(f"   Status: {execution.status}")
+        click.echo(f"\n💡 To check the status, run:")
+        click.echo(f"   datalab get-execution-status --execution_id {execution.id}")
+        click.echo(f"\n   Or poll until complete:")
+        click.echo(f"   datalab get-execution-status --execution_id {execution.id} --max_polls 300 --poll_interval 2")
+
+    except DatalabError as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@click.command()
+@click.option("--execution_id", required=True, type=int, help="ID of the execution")
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    help="Output file path to save execution results",
+)
+@click.option(
+    "--max_polls", default=1, type=int, help="Maximum number of polling attempts (1 for single check)"
+)
+@click.option("--poll_interval", default=1, type=int, help="Polling interval in seconds")
+@click.option(
+    "--download",
+    is_flag=True,
+    help="Download actual results from presigned URLs (default: just show URLs)"
+)
+@click.option("--api_key", required=False, help="Datalab API key")
+@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+def get_execution_status(
+    execution_id: int,
+    output: Optional[str],
+    max_polls: int,
+    poll_interval: int,
+    download: bool,
+    api_key: Optional[str],
+    base_url: str,
+):
+    """Get the status of a workflow execution"""
+    try:
+        if api_key is None:
+            api_key = settings.DATALAB_API_KEY
+
+        if api_key is None:
+            raise DatalabError(
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+            )
+
+        client = DatalabClient(api_key=api_key, base_url=base_url)
+        execution = client.get_execution_status(
+            execution_id=execution_id,
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+            download_results=download,
+        )
+
+        click.echo(f"📊 Execution Status:")
+        click.echo(f"   Execution ID: {execution.id}")
+        click.echo(f"   Workflow ID: {execution.workflow_id}")
+        click.echo(f"   Status: {execution.status}")
+        click.echo(f"   Success: {execution.success}")
+        click.echo(f"   Created: {execution.created_at}")
+        if execution.completed_at:
+            click.echo(f"   Completed: {execution.completed_at}")
+
+        if execution.error:
+            click.echo(f"   Error: {execution.error}")
+
+        if execution.results:
+            click.echo(f"\n   Step Results:")
+            for step_name, step_data in execution.results.items():
+                click.echo(f"\n   [{step_name}]")
+                if isinstance(step_data, dict):
+                    if "output_url" in step_data and not download:
+                        click.echo(f"      Status: {step_data.get('status', 'N/A')}")
+                        click.echo(f"      Output URL: {step_data.get('output_url')}")
+                        click.echo(f"      💡 Use --download to fetch actual results")
+                    else:
+                        click.echo(f"      {json.dumps(step_data, indent=8)}")
+                else:
+                    click.echo(f"      {step_data}")
+
+        # Save output if requested
+        if output:
+            output_path = Path(output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            execution.save_output(output_path)
+            click.echo(f"\n📁 Results saved to: {output_path}")
+
+    except DatalabError as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
 # Add commands to CLI group
 cli.add_command(convert)
 cli.add_command(ocr)
+cli.add_command(create_workflow)
+cli.add_command(get_workflow)
+cli.add_command(list_workflows)
+cli.add_command(execute_workflow)
+cli.add_command(get_execution_status)
 
 if __name__ == "__main__":
     cli()
