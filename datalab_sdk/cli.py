@@ -708,7 +708,7 @@ def visualize_workflow(definition: str):
     try:
         import json
         from pathlib import Path
-        from collections import defaultdict
+        from collections import defaultdict, deque
 
         # Load workflow definition
         definition_path = Path(definition)
@@ -728,45 +728,37 @@ def visualize_workflow(definition: str):
         # Build dependency graph
         step_map = {step["unique_name"]: step for step in steps}
 
-        # ASCII tree visualization
-        click.echo(f"\n{'='*60}")
+        click.echo(f"\n{'='*70}")
         click.echo(f"Workflow: {name}")
-        click.echo(f"{'='*60}\n")
-        click.echo(f"Total steps: {len(steps)}\n")
+        click.echo(f"{'='*70}\n")
 
-        # Find root nodes (no dependencies)
-        roots = [s for s in steps if not s.get("depends_on", [])]
-
-        # Build children map
+        # Build parent/child maps
         children = defaultdict(list)
         for step in steps:
+            step_name = step["unique_name"]
             for dep in step.get("depends_on", []):
-                children[dep].append(step["unique_name"])
+                children[dep].append(step_name)
 
-        def print_tree(step_name, prefix="", is_last=True):
-            """Recursively print tree structure"""
-            step = step_map[step_name]
+        # Topological sort to determine layers
+        in_degree = {step["unique_name"]: len(step.get("depends_on", [])) for step in steps}
+        layers = []
+        queue = deque([s["unique_name"] for s in steps if in_degree[s["unique_name"]] == 0])
 
-            # Print current node
-            connector = "└── " if is_last else "├── "
-            click.echo(f"{prefix}{connector}{step_name}")
-            # click.echo(f"{prefix}{'    ' if is_last else '│   '}    └─ ({step['step_key']})")
+        while queue:
+            layer = []
+            for _ in range(len(queue)):
+                node = queue.popleft()
+                layer.append(node)
+                for child in children[node]:
+                    in_degree[child] -= 1
+                    if in_degree[child] == 0:
+                        queue.append(child)
+            layers.append(layer)
 
-            # Print children
-            child_list = children.get(step_name, [])
-            for i, child_name in enumerate(child_list):
-                is_last_child = (i == len(child_list) - 1)
-                new_prefix = prefix + ("    " if is_last else "│   ")
-                print_tree(child_name, new_prefix, is_last_child)
+        # Render DAG as simple tree
+        _render_dag_simple(layers, children, step_map)
 
-        # Print each root and its subtree
-        for i, root in enumerate(roots):
-            is_last_root = (i == len(roots) - 1)
-            print_tree(root["unique_name"], "", is_last_root)
-            if not is_last_root:
-                click.echo()
-
-        click.echo()
+        click.echo(f"\nTotal steps: {len(steps)}")
 
     except json.JSONDecodeError as e:
         click.echo(f"❌ Invalid JSON: {e}", err=True)
@@ -777,6 +769,44 @@ def visualize_workflow(definition: str):
     except Exception as e:
         click.echo(f"❌ Error: {e}", err=True)
         sys.exit(1)
+
+
+def _render_dag_simple(layers, children, step_map):
+    """Simple DAG rendering with topological sort"""
+    for layer_idx, layer in enumerate(layers):
+        # Show layer info with color
+        layer_info = f"Layer {layer_idx}"
+        if layer_idx == 0:
+            layer_info += " (start)"
+            color = "green"
+        elif layer_idx == len(layers) - 1:
+            layer_info += " (end)"
+            color = "red"
+        elif len(layer) > 1:
+            color = "yellow"
+        else:
+            color = "cyan"
+
+        click.echo(click.style(f"{layer_info}:", fg=color, bold=True))
+
+        for step_name in layer:
+            step = step_map[step_name]
+            step_key = step.get("step_key", "unknown")
+            depends = step.get("depends_on", [])
+
+            # Show the step - color code by step type
+            step_color = "blue" if "marker" in step_key else "magenta"
+            click.echo(f"  • {click.style(step_name, fg=step_color)} ({click.style(step_key, fg='white', dim=True)})")
+
+            # Show dependencies if any
+            if depends:
+                click.echo(click.style(f"    ← depends on: {', '.join(depends)}", fg="white", dim=True))
+
+        # Show what comes next
+        if layer_idx < len(layers) - 1:
+            click.echo(click.style("  |", fg="white", dim=True))
+            click.echo(click.style("  v", fg="white", dim=True))
+            click.echo()
 
 
 # Add commands to CLI group

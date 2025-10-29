@@ -1,0 +1,119 @@
+{
+  "name": "Parse, Segment, Extract, Aggregate, then Post to Slack",
+  "description": "Full pipeline: Parse documents, segment into sections, extract data from multiple segments in parallel, aggregate results, and post to Slack",
+  "steps": [
+    {
+      "step_key": "marker_parse",
+      "unique_name": "parse",
+      "settings": {},
+      "depends_on": []
+    },
+    {
+      "step_key": "marker_segment",
+      "unique_name": "segment",
+      "settings": {
+        "segmentation_schema": {
+          "segments": [
+            {
+              "name": "Item 4",
+              "description": ""
+            },
+            {
+              "name": "Item 5",
+              "description": ""
+            },
+            {
+              "name": "Item 16E",
+              "description": ""
+            }
+          ],
+          "segmentation_strategy": "custom"
+        }
+      },
+      "depends_on": ["parse"]
+    },
+    {
+      "step_key": "marker_extract",
+      "unique_name": "extract_item4",
+      "settings": {
+        "segment_reference": {
+          "name": "Item 4"
+        },
+        "page_schema": {
+          "key_products": {
+            "type": "array",
+            "description": "Key products with patent info",
+            "items": {
+              "type": "object",
+              "properties": {
+                "product_name": {
+                  "type": "string"
+                },
+                "total_sales_dkk": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "depends_on": ["segment"]
+    },
+    {
+      "step_key": "marker_extract",
+      "unique_name": "extract_item5",
+      "settings": {
+        "segment_reference": {
+          "name": "Item 5"
+        },
+        "page_schema": {
+          "phase_3_compounds": {
+            "type": "array",
+            "description": "Phase 3 development compounds",
+            "items": {
+              "type": "object",
+              "properties": {
+                "compound_name": {
+                  "type": "string"
+                },
+                "year_entered": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "depends_on": ["segment"]
+    },
+    {
+      "step_key": "api_request",
+      "unique_name": "post_to_slack",
+      "settings": {
+        "url": "https://slack.com/api/chat.postMessage",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "channel": "<YOUR_SLACK_CHANNEL_ID>",
+          "text": "Workflow completed!",
+          "blocks": [
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "Ran some extractions."
+              }
+            }
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "token": "YOUR_SLACK_BOT_TOKEN"
+        }
+      },
+      "depends_on": ["extract_item4", "extract_item5"]
+    }
+  ]
+}
