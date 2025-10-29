@@ -104,8 +104,7 @@ def main():
     print("=" * 50)
     try:
         input_config = InputConfig(
-            type="single_file",
-            file_url=FILE_URL
+            file_urls=[FILE_URL]
         )
 
         execution = client.execute_workflow(

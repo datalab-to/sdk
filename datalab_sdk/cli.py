@@ -587,12 +587,11 @@ def execute_workflow(
 
         # Create InputConfig object
         input_cfg = InputConfig(
-            type=config_data["type"],
-            file_url=config_data.get("file_url"),
-            file_path=config_data.get("file_path"),
-            additional_config={
-                k: v for k, v in config_data.items() if k not in ["type", "file_url", "file_path"]
-            } if len(config_data) > 1 else None,
+            file_urls=config_data.get("file_urls"),
+            bucket=config_data.get("bucket"),
+            prefix=config_data.get("prefix"),
+            pattern=config_data.get("pattern"),
+            storage_type=config_data.get("storage_type"),
         )
 
         client = DatalabClient(api_key=api_key, base_url=base_url)

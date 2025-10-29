@@ -37,8 +37,7 @@ def main():
 
     # Create input configuration
     input_config = InputConfig(
-        type="single_file",
-        file_url=args.file_url
+        file_urls=[args.file_url]
     )
 
     # Execute the workflow

@@ -166,20 +166,34 @@ class Workflow:
 
 @dataclass
 class InputConfig:
-    """Configuration for workflow input"""
+    """
+    Configuration for workflow input
 
-    type: str  # "single_file" or other types
-    file_url: Optional[str] = None
-    file_path: Optional[str] = None
-    additional_config: Optional[Dict[str, Any]] = None
+    Supports three formats:
+    1. Direct file URLs: InputConfig(file_urls=["https://..."])
+    2. Bucket enumeration: InputConfig(bucket="my-bucket", prefix="path/", pattern="*.pdf")
+    3. Explicit storage type: InputConfig(bucket="my-bucket", storage_type="s3")
+    """
+
+    file_urls: Optional[list[str]] = None
+    bucket: Optional[str] = None
+    prefix: Optional[str] = None
+    pattern: Optional[str] = None
+    storage_type: Optional[str] = None  # "s3" or "r2"
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API requests"""
-        data = {"type": self.type}
-        if self.file_url:
-            data["file_url"] = self.file_url
-        if self.additional_config:
-            data.update(self.additional_config)
+        data = {}
+        if self.file_urls:
+            data["file_urls"] = self.file_urls
+        if self.bucket:
+            data["bucket"] = self.bucket
+        if self.prefix:
+            data["prefix"] = self.prefix
+        if self.pattern:
+            data["pattern"] = self.pattern
+        if self.storage_type:
+            data["storage_type"] = self.storage_type
         return data
 
 
