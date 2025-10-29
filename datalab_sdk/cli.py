@@ -701,6 +701,84 @@ def get_execution_status(
         sys.exit(1)
 
 
+@click.command()
+@click.option("--definition", required=True, help="Path to workflow definition JSON file")
+def visualize_workflow(definition: str):
+    """Visualize workflow DAG from a JSON definition file"""
+    try:
+        import json
+        from pathlib import Path
+        from collections import defaultdict
+
+        # Load workflow definition
+        definition_path = Path(definition)
+        if not definition_path.exists():
+            raise DatalabError(f"Definition file not found: {definition}")
+
+        with open(definition_path, 'r') as f:
+            workflow_def = json.load(f)
+
+        name = workflow_def.get("name", "Unnamed Workflow")
+        steps = workflow_def.get("steps", [])
+
+        if not steps:
+            click.echo("⚠️  No steps found in workflow definition")
+            return
+
+        # Build dependency graph
+        step_map = {step["unique_name"]: step for step in steps}
+
+        # ASCII tree visualization
+        click.echo(f"\n{'='*60}")
+        click.echo(f"Workflow: {name}")
+        click.echo(f"{'='*60}\n")
+        click.echo(f"Total steps: {len(steps)}\n")
+
+        # Find root nodes (no dependencies)
+        roots = [s for s in steps if not s.get("depends_on", [])]
+
+        # Build children map
+        children = defaultdict(list)
+        for step in steps:
+            for dep in step.get("depends_on", []):
+                children[dep].append(step["unique_name"])
+
+        def print_tree(step_name, prefix="", is_last=True):
+            """Recursively print tree structure"""
+            step = step_map[step_name]
+
+            # Print current node
+            connector = "└── " if is_last else "├── "
+            click.echo(f"{prefix}{connector}{step_name}")
+            # click.echo(f"{prefix}{'    ' if is_last else '│   '}    └─ ({step['step_key']})")
+
+            # Print children
+            child_list = children.get(step_name, [])
+            for i, child_name in enumerate(child_list):
+                is_last_child = (i == len(child_list) - 1)
+                new_prefix = prefix + ("    " if is_last else "│   ")
+                print_tree(child_name, new_prefix, is_last_child)
+
+        # Print each root and its subtree
+        for i, root in enumerate(roots):
+            is_last_root = (i == len(roots) - 1)
+            print_tree(root["unique_name"], "", is_last_root)
+            if not is_last_root:
+                click.echo()
+
+        click.echo()
+
+    except json.JSONDecodeError as e:
+        click.echo(f"❌ Invalid JSON: {e}", err=True)
+        sys.exit(1)
+    except KeyError as e:
+        click.echo(f"❌ Missing required field in workflow definition: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
 # Add commands to CLI group
 cli.add_command(convert)
 cli.add_command(ocr)
@@ -709,6 +787,7 @@ cli.add_command(get_workflow)
 cli.add_command(list_workflows)
 cli.add_command(execute_workflow)
 cli.add_command(get_execution_status)
+cli.add_command(visualize_workflow)
 
 if __name__ == "__main__":
     cli()

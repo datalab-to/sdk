@@ -42,6 +42,37 @@ This single command:
 4. Polls until completion
 5. Displays and saves results
 
+## Visualizing Workflows
+
+Before running a workflow, visualize its DAG structure:
+
+```bash
+datalab visualize-workflow --definition workflow_definitions/compare_segmentation.json
+```
+
+**Output:**
+```
+============================================================
+Workflow: Parallel Marker vs Reducto Comparison
+============================================================
+
+Total steps: 5
+
+├── marker_parse
+│       └─ step_key: marker_parse
+│   └── marker_segment
+│           └─ step_key: marker_segment
+
+└── reducto_upload
+        └─ step_key: api_request
+    └── reducto_parse
+            └─ step_key: api_request
+        └── reducto_split
+                └─ step_key: api_request
+```
+
+This helps you understand the workflow structure and dependencies before execution.
+
 ## Workflow Definitions
 
 There are pre-built workflows provided in `workflow_definitions/` with more detailed instructions on what each one does, and how you can make your own, in the [README](./workflow_definitions/README.md).
