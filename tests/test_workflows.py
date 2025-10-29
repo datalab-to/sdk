@@ -76,7 +76,7 @@ class TestWorkflowMethods:
                 assert workflow.name == "Test Workflow"
                 assert workflow.team_id == 12
                 assert len(workflow.steps) == 2
-                assert workflow.steps[0].step_key == "marker_parse"
+                assert workflow.steps[0].unique_name == "marker_parse"
                 assert workflow.steps[1].depends_on == ["marker_parse"]
 
     @pytest.mark.asyncio

@@ -42,33 +42,6 @@ def load_workflow_definition(definition_path: str, replacements: dict = None) ->
     return workflow_def
 
 
-def create_simple_workflow_definition() -> dict:
-    """Create a simple default workflow definition"""
-    return {
-        "name": "Simple Parse and Extract",
-        "steps": [
-            {
-                "step_key": "marker_parse",
-                "unique_name": "parse_document",
-                "settings": {"max_pages": 10, "output_format": "json"},
-                "depends_on": []
-            },
-            {
-                "step_key": "marker_extract",
-                "unique_name": "extract_metadata",
-                "settings": {
-                    "page_schema": {
-                        "title": {"type": "string"},
-                        "author": {"type": "string"},
-                        "summary": {"type": "string"}
-                    }
-                },
-                "depends_on": ["parse_document"]
-            }
-        ]
-    }
-
-
 def main():
     parser = argparse.ArgumentParser(
         description="Run any workflow end-to-end from definition to results"
@@ -126,14 +99,10 @@ def main():
     # Step 1: Load or create workflow definition
     print("📄 Loading workflow definition...")
 
-    if args.definition:
-        # Build replacements dict
-        replacements = dict(args.replace) if args.replace else None
-        workflow_def = load_workflow_definition(args.definition, replacements)
-        print(f"   Source: {args.definition}")
-    else:
-        workflow_def = create_simple_workflow_definition()
-        print(f"   Source: Built-in simple workflow")
+    # Build replacements dict
+    replacements = dict(args.replace) if args.replace else None
+    workflow_def = load_workflow_definition(args.definition, replacements)
+    print(f"   Source: {args.definition}")
 
     print(f"   Name: {workflow_def['name']}")
     print(f"   Steps: {len(workflow_def['steps'])}\n")

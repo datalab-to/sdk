@@ -4,6 +4,7 @@ This directory contains JSON workflow definitions that can be loaded and execute
 
 ## Available Workflows
 
+- [Parse and Segment (Simple)](#parse-and-segment-simple) - Do a straightforward parse -> segment to run one or more files through
 - [Eval Segmentation Across Providers](#eval-segmentation-across-providers) - Compare Marker vs Reducto segmentation in parallel
 - [Parallel Extract Large SEC Filings](#parallel-extract-large-sec-filings) - Parse → Segment → Extract from multiple sections in parallel
 - [Slack Alert Workflow](#slack-alert-workflow) - Full pipeline with parallel extraction, aggregation, and Slack notification
@@ -33,6 +34,35 @@ For a full list of `settings` to use for `marker` related steps, visit our [API 
 
 ## Available Workflow Definitions
 
+### Parse and Segment (Simple)
+
+**What it does:**
+Simple workflow that does `marker_parse` -> `marker_segment`. You can pass in one or more `file_urls` when triggering your workflow.
+
+Once you get results, you can process them to run your own custom evaluations.
+
+**Structure:**
+- **Marker branch**: Parse → Segment
+
+**Visualize:**
+```bash
+datalab visualize-workflow --definition recipes/workflows/workflow_definitions/parse_segment.json
+```
+
+**Execute:**
+```bash
+# Using end-to-end runner
+python recipes/workflows/end_to_end_workflow.py \
+    --definition recipes/workflows/workflow_definitions/parse_segment.json \
+    --file_url https://www.novonordisk.com/content/dam/nncorp/global/en/investors/irmaterial/annual_report/2024/novo-nordisk-form-20-f-2023.pdf
+
+# Or step-by-step
+python recipes/workflows/workflow_api_tutorial/create_workflow.py \
+    --definition recipes/workflows/workflow_definitions/parse_segment.json
+```
+
+---
+
 ### Eval Segmentation Across Providers
 
 **What it does:**
@@ -46,21 +76,21 @@ Once you get results, you can process them to run your own custom evaluations.
 
 **Visualize:**
 ```bash
-datalab visualize-workflow --definition workflow_definitions/eval_segmentation.json
+datalab visualize-workflow --definition recipes/workflows/workflow_definitions/eval_segmentation.json
 ```
 
 **Execute:**
 ```bash
 # Using end-to-end runner
 python recipes/workflows/end_to_end_workflow.py \
-    --definition workflow_definitions/eval_segmentation.json \
+    --definition recipes/workflows/workflow_definitions/eval_segmentation.json \
     --file_url https://example.com/doc.pdf \
     --replace YOUR_REDUCTO_API_KEY your_key_here \
     --save results.json
 
 # Or step-by-step
 python recipes/workflows/workflow_api_tutorial/create_workflow.py \
-    --definition workflow_definitions/eval_segmentation.json \
+    --definition recipes/workflows/workflow_definitions/eval_segmentation.json \
     --replace YOUR_REDUCTO_API_KEY your_key_here
 ```
 
@@ -86,19 +116,19 @@ Without this, you might have a long, dense schema that applies on the entire doc
 
 **Visualize:**
 ```bash
-datalab visualize-workflow --definition workflow_definitions/segment_parallel_extract.json
+datalab visualize-workflow --definition recipes/workflows/workflow_definitions/segment_parallel_extract.json
 ```
 
 **Execute:**
 ```bash
 # Using end-to-end runner
 python recipes/workflows/end_to_end_workflow.py \
-    --definition workflow_definitions/segment_parallel_extraction.json \
+    --definition recipes/workflows/workflow_definitions/segment_parallel_extract.json \
     --file_url https://www.novonordisk.com/content/dam/nncorp/global/en/investors/irmaterial/annual_report/2024/novo-nordisk-form-20-f-2023.pdf
 
 # Or step-by-step
 python recipes/workflows/workflow_api_tutorial/create_workflow.py \
-    --definition workflow_definitions/segment_parallel_extraction.json
+    --definition recipes/workflows/workflow_definitions/segment_parallel_extract.json
 ```
 
 ---
@@ -119,14 +149,14 @@ Complete pipeline that parses documents, segments into sections, extracts struct
 
 **Visualize:**
 ```bash
-datalab visualize-workflow --definition workflow_definitions/slack_alert.json
+datalab visualize-workflow --definition recipes/workflows/workflow_definitions/slack_alert.json
 ```
 
 **Execute:**
 ```bash
 # Using end-to-end runner with multiple files
 python recipes/workflows/end_to_end_workflow.py \
-    --definition workflow_definitions/slack_alert.json \
+    --definition recipes/workflows/workflow_definitions/slack_alert.json \
     --file_url https://www.novonordisk.com/content/dam/nncorp/global/en/investors/irmaterial/annual_report/2024/novo-nordisk-form-20-f-2023.pdf \
     --replace YOUR_SLACK_BOT_TOKEN xoxb-your-token \
     --replace YOUR_SLACK_CHANNEL_ID <YOUR_CHANNEL_ID> \
@@ -134,7 +164,7 @@ python recipes/workflows/end_to_end_workflow.py \
 
 # Or step-by-step
 python recipes/workflows/workflow_api_tutorial/create_workflow.py \
-    --definition workflow_definitions/slack_alert.json \
+    --definition recipes/workflows/workflow_definitions/slack_alert.json \
     --replace YOUR_SLACK_BOT_TOKEN xoxb-your-token \
     --replace YOUR_SLACK_CHANNEL_ID <YOUR_CHANNEL_ID>
 ```

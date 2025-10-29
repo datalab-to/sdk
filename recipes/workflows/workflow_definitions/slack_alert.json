@@ -1,6 +1,6 @@
 {
-  "name": "Parse, Segment, Extract, Aggregate, then Post to Slack",
-  "description": "Full pipeline: Parse documents, segment into sections, extract data from multiple segments in parallel, aggregate results, and post to Slack",
+  "name": "Parse then Post to Slack",
+  "description": "Parse documents and post to Slack",
   "steps": [
     {
       "step_key": "marker_parse",
