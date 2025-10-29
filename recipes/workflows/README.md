@@ -27,28 +27,33 @@ Get your API key from: https://www.datalab.to/app/keys
 Before running a workflow, you can visualize its structure:
 
 ```bash
-datalab visualize-workflow --definition workflow_definitions/compare_segmentation.json
+datalab visualize-workflow --definition recipes/workflows/workflow_definitions/segment_parallel_extract.json
 ```
 
 **Output:**
 ```
-============================================================
-Workflow: Parallel Marker vs Reducto Comparison
-============================================================
+======================================================================
+Workflow: Parse, Segment, and Parallel Extract
+======================================================================
 
-Total steps: 5
+Layer 0 (start):
+  • parse (marker_parse)
+  |
+  v
 
-├── marker_parse
-│       └─ step_key: marker_parse
-│   └── marker_segment
-│           └─ step_key: marker_segment
+Layer 1:
+  • segment (marker_segment)
+    ← depends on: parse
+  |
+  v
 
-└── reducto_upload
-        └─ step_key: api_request
-    └── reducto_parse
-            └─ step_key: api_request
-        └── reducto_split
-                └─ step_key: api_request
+Layer 2 (end):
+  • extract_item4 (marker_extract)
+    ← depends on: segment
+  • extract_item5 (marker_extract)
+    ← depends on: segment
+  • extract_item16e (marker_extract)
+    ← depends on: segment
 ```
 
 This helps you understand the workflow and dependencies before execution. If you're making a custom workflow, this can come in handy to sanity check since those JSON files can quickly get complicated!
@@ -66,7 +71,7 @@ python recipes/workflows/end_to_end_workflow.py \
     --definition workflow_definitions/my_workflow.json \
     --file_url https://example.com/doc.pdf
 ```
-This single command:
+This script:
 1. Loads the workflow definition
 2. Creates the workflow
 3. Executes it with your file
@@ -76,7 +81,7 @@ This single command:
 You can optionally create just the workflow (without executing it) using the example script (which shows you how to integrate it into your own python code) like this:
 
 ```bash
-python recipes/workflows/workflow_api_tutorial/create_workflow.py \
+python recipes/workflows/workflow_api_tutorial/3_create_workflow.py \
     --definition workflow_definitions/my_workflow.json
 ```
 
@@ -87,6 +92,8 @@ datalab create-workflow \
     --name "My Workflow" \
     --steps workflow_definitions/my_workflow.json
 ```
+
+The scripts in `workflow_api_tutorial/` are code samples that will help you integrate each operation into your own python code.
 
 ## Getting Help
 
