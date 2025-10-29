@@ -2,6 +2,12 @@
 
 This directory contains JSON workflow definitions that can be loaded and executed by the example scripts.
 
+## Available Workflows
+
+- [Eval Segmentation Across Providers](#eval-segmentation-across-providers) - Compare Marker vs Reducto segmentation in parallel
+- [Parallel Extract Large SEC Filings](#parallel-extract-large-sec-filings) - Parse → Segment → Extract from multiple sections in parallel
+- [Slack Alert Workflow](#slack-alert-workflow) - Full pipeline with parallel extraction, aggregation, and Slack notification
+
 ## Structure
 
 Each workflow definition is a JSON file with the following structure:
@@ -27,7 +33,7 @@ For a full list of `settings` to use for `marker` related steps, visit our [API 
 
 ## Available Workflow Definitions
 
-### Eval Segmentation
+### Eval Segmentation Across Providers
 
 **What it does:**
 Lets you pass in one or more documents into two parallel flows, one that does `marker_parse` -> `marker_segment`, and another that uses our `api_request` step to make authenticated API calls to an external vendor you might be evaluating (Reducto, etc.) to do something similar.
@@ -63,6 +69,40 @@ python recipes/workflows/individual_examples/create_workflow.py \
 
 ---
 
+### Parallel Extract Large SEC Filings
+
+**What it does:**
+Takes in 20-F filings, uses segmentation to segment the document by sections provided in the table of contents, and then for a few specific segments of interest, does parallel extractions that are specific to each segment.
+
+Without this, you might have a long, dense schema that applies on the entire document, which is slow and error prone. This lets you optimize your extraction schemas for accuracy and speed in a scalable way.
+
+**Structure:**
+1. **Parse** - Parse document with Marker
+2. **Segment** - Segment into Item 4, Item 5, and Item 16E sections
+3. **Extract (parallel)** - Extract data from each segment:
+   - `extract_item4` - Key products with sales data
+   - `extract_item5` - Phase 3 compounds
+   - `extract_item16e` - Share repurchase info
+
+**Visualize:**
+```bash
+datalab visualize-workflow --definition workflow_definitions/segment_parallel_extract.json
+```
+
+**Execute:**
+```bash
+# Using end-to-end runner
+python recipes/workflows/end_to_end_workflow.py \
+    --definition workflow_definitions/segment_parallel_extraction.json \
+    --file_url https://www.novonordisk.com/content/dam/nncorp/global/en/investors/irmaterial/annual_report/2024/novo-nordisk-form-20-f-2023.pdf
+
+# Or step-by-step
+python recipes/workflows/individual_examples/create_workflow.py \
+    --definition workflow_definitions/segment_parallel_extraction.json
+```
+
+---
+
 ### Slack Alert Workflow
 
 **What it does:**
@@ -75,7 +115,7 @@ Complete pipeline that parses documents, segments into sections, extracts struct
    - `extract_item4` - Key products with sales data
    - `extract_item5` - Phase 3 compounds
    - `extract_item16e` - Share repurchase info
-5. **Post to Slack** - Send notification with results
+4. **Post to Slack** - Send notification with results
 
 **Visualize:**
 ```bash

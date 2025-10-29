@@ -9,84 +9,6 @@
       "depends_on": []
     },
     {
-      "step_key": "marker_segment",
-      "unique_name": "segment",
-      "settings": {
-        "segmentation_schema": {
-          "segments": [
-            {
-              "name": "Item 4",
-              "description": ""
-            },
-            {
-              "name": "Item 5",
-              "description": ""
-            },
-            {
-              "name": "Item 16E",
-              "description": ""
-            }
-          ],
-          "segmentation_strategy": "custom"
-        }
-      },
-      "depends_on": ["parse"]
-    },
-    {
-      "step_key": "marker_extract",
-      "unique_name": "extract_item4",
-      "settings": {
-        "segment_reference": {
-          "name": "Item 4"
-        },
-        "page_schema": {
-          "key_products": {
-            "type": "array",
-            "description": "Key products with patent info",
-            "items": {
-              "type": "object",
-              "properties": {
-                "product_name": {
-                  "type": "string"
-                },
-                "total_sales_dkk": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      },
-      "depends_on": ["segment"]
-    },
-    {
-      "step_key": "marker_extract",
-      "unique_name": "extract_item5",
-      "settings": {
-        "segment_reference": {
-          "name": "Item 5"
-        },
-        "page_schema": {
-          "phase_3_compounds": {
-            "type": "array",
-            "description": "Phase 3 development compounds",
-            "items": {
-              "type": "object",
-              "properties": {
-                "compound_name": {
-                  "type": "string"
-                },
-                "year_entered": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        }
-      },
-      "depends_on": ["segment"]
-    },
-    {
       "step_key": "api_request",
       "unique_name": "post_to_slack",
       "settings": {
@@ -113,7 +35,7 @@
           "token": "YOUR_SLACK_BOT_TOKEN"
         }
       },
-      "depends_on": ["extract_item4", "extract_item5"]
+      "depends_on": ["parse"]
     }
   ]
 }

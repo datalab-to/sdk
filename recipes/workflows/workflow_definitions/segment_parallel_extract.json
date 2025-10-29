@@ -1,0 +1,113 @@
+{
+  "name": "Parse, Segment, and Parallel Extract",
+  "description": "Parse documents, segment into sections, then extract data from multiple segments in parallel",
+  "steps": [
+    {
+      "step_key": "marker_parse",
+      "unique_name": "parse",
+      "settings": {},
+      "depends_on": []
+    },
+    {
+      "step_key": "marker_segment",
+      "unique_name": "segment",
+      "settings": {
+        "segmentation_schema": {
+          "segments": [
+            {
+              "name": "Item 4",
+              "description": ""
+            },
+            {
+              "name": "Item 5",
+              "description": ""
+            },
+            {
+              "name": "Item 16E",
+              "description": ""
+            }
+          ],
+          "segmentation_strategy": "custom"
+        }
+      },
+      "depends_on": ["parse"]
+    },
+    {
+      "step_key": "marker_extract",
+      "unique_name": "extract_item4",
+      "settings": {
+        "segment_reference": {
+          "name": "Item 4"
+        },
+        "page_schema": {
+          "key_products": {
+            "type": "array",
+            "description": "Key products with patent info",
+            "items": {
+              "type": "object",
+              "properties": {
+                "product_name": {
+                  "type": "string"
+                },
+                "total_sales_dkk": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "depends_on": ["segment"]
+    },
+    {
+      "step_key": "marker_extract",
+      "unique_name": "extract_item5",
+      "settings": {
+        "segment_reference": {
+          "name": "Item 5"
+        },
+        "page_schema": {
+          "phase_3_compounds": {
+            "type": "array",
+            "description": "Phase 3 development compounds",
+            "items": {
+              "type": "object",
+              "properties": {
+                "compound_name": {
+                  "type": "string"
+                },
+                "year_entered": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      },
+      "depends_on": ["segment"]
+    },
+    {
+      "step_key": "marker_extract",
+      "unique_name": "extract_item16e",
+      "settings": {
+        "segment_reference": {
+          "name": "Item 16E"
+        },
+        "page_schema": {
+          "share_repurchase": {
+            "type": "object",
+            "properties": {
+              "total_shares_purchased": {
+                "type": "string"
+              },
+              "avg_price_per_share": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      },
+      "depends_on": ["segment"]
+    }
+  ]
+}
