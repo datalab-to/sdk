@@ -502,8 +502,7 @@ def get_workflow(workflow_id: int, api_key: Optional[str], base_url: str):
         click.echo(f"   Name: {workflow.name}")
         click.echo(f"   Team ID: {workflow.team_id}")
         click.echo(f"   Steps: {len(workflow.steps)}")
-        click.echo(f"   Created: {workflow.created_at}")
-        click.echo(f"   Updated: {workflow.updated_at}")
+        click.echo(f"   Created: {workflow.created}")
 
         for i, step in enumerate(workflow.steps, 1):
             click.echo(f"\n   Step {i}: {step.unique_name}")
@@ -544,7 +543,7 @@ def list_workflows(api_key: Optional[str], base_url: str):
             click.echo(f"   Name: {workflow.name}")
             click.echo(f"   Team ID: {workflow.team_id}")
             click.echo(f"   Steps: {len(workflow.steps)}")
-            click.echo(f"   Created: {workflow.created_at}")
+            click.echo(f"   Created: {workflow.created}")
             click.echo("")
 
     except DatalabError as e:
@@ -669,9 +668,9 @@ def get_execution_status(
         click.echo(f"   Workflow ID: {execution.workflow_id}")
         click.echo(f"   Status: {execution.status}")
         click.echo(f"   Success: {execution.success}")
-        click.echo(f"   Created: {execution.created_at}")
-        if execution.completed_at:
-            click.echo(f"   Completed: {execution.completed_at}")
+        click.echo(f"   Created: {execution.created}")
+        if execution.completed:
+            click.echo(f"   Completed: {execution.completed}")
 
         if execution.error:
             click.echo(f"   Error: {execution.error}")

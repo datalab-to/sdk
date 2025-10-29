@@ -52,7 +52,7 @@ def main():
     print(f"Execution ID:  {execution.id}")
     print(f"Workflow ID:   {execution.workflow_id}")
     print(f"Status:        {execution.status}")
-    print(f"Created:       {execution.created_at}")
+    print(f"Created:       {execution.created}")
     print()
 
     print("💡 Next steps:")

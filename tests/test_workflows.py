@@ -57,8 +57,8 @@ class TestWorkflowMethods:
                     "depends_on": ["marker_parse"],
                 },
             ],
-            "created_at": "2024-01-01T00:00:00Z",
-            "updated_at": "2024-01-01T00:00:00Z",
+            "created": "2024-01-01T00:00:00Z",
+            "updated": "2024-01-01T00:00:00Z",
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
@@ -94,8 +94,8 @@ class TestWorkflowMethods:
                     "depends_on": [],
                 },
             ],
-            "created_at": "2024-01-01T00:00:00Z",
-            "updated_at": "2024-01-01T00:00:00Z",
+            "created": "2024-01-01T00:00:00Z",
+            "updated": "2024-01-01T00:00:00Z",
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
@@ -127,7 +127,7 @@ class TestWorkflowMethods:
                             "depends_on": [],
                         }
                     ],
-                    "created_at": "2024-01-01T00:00:00Z",
+                    "created": "2024-01-01T00:00:00Z",
                 },
                 {
                     "id": 2,
@@ -141,7 +141,7 @@ class TestWorkflowMethods:
                             "depends_on": [],
                         }
                     ],
-                    "created_at": "2024-01-02T00:00:00Z",
+                    "created": "2024-01-02T00:00:00Z",
                 },
             ]
         }
@@ -320,7 +320,7 @@ class TestSyncWorkflowClient:
                     "depends_on": [],
                 }
             ],
-            "created_at": "2024-01-01T00:00:00Z",
+            "created": "2024-01-01T00:00:00Z",
         }
 
         client = DatalabClient(api_key="test-key")

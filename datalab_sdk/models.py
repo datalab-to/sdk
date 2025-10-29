@@ -215,13 +215,13 @@ class WorkflowExecution:
 
     id: int
     workflow_id: int
-    status: str  # "processing", "complete", "failed"
+    status: str  # "IN_PROGRESS", "COMPLETED", "FAILED"
     input_config: Dict[str, Any]
     success: bool = True
     results: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
-    created_at: Optional[str] = None
-    completed_at: Optional[str] = None
+    created: Optional[str] = None
+    updated: Optional[str] = None
 
     def save_output(self, output_path: Union[str, Path]) -> None:
         """Save the execution results to a JSON file"""
@@ -235,8 +235,8 @@ class WorkflowExecution:
             "input_config": self.input_config,
             "results": self.results,
             "error": self.error,
-            "created_at": self.created_at,
-            "completed_at": self.completed_at,
+            "created": self.created,
+            "updated": self.updated,
         }
 
         with open(output_path.with_suffix(".json"), "w", encoding="utf-8") as f:

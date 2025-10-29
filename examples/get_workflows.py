@@ -31,8 +31,7 @@ def main():
         print(f"ID:         {workflow.id}")
         print(f"Name:       {workflow.name}")
         print(f"Team ID:    {workflow.team_id}")
-        print(f"Created:    {workflow.created_at}")
-        print(f"Updated:    {workflow.updated_at}")
+        print(f"Created:    {workflow.created}")
         print(f"Steps:      {len(workflow.steps)}")
 
         if workflow.steps:

@@ -88,7 +88,7 @@ def main():
         workflow_details = client.get_workflow(workflow_id)
         print(f"✅ Retrieved workflow {workflow_id}")
         print(f"   Name: {workflow_details.name}")
-        print(f"   Created: {workflow_details.created_at}")
+        print(f"   Created: {workflow_details.created}")
         print(f"   Steps:")
         for i, step in enumerate(workflow_details.steps, 1):
             print(f"      {i}. {step.unique_name} ({step.step_key})")

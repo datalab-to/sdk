@@ -482,8 +482,8 @@ class AsyncDatalabClient:
             success=response.get("success", True),
             results=response.get("results"),
             error=response.get("error"),
-            created_at=response.get("created_at"),
-            completed_at=response.get("completed_at"),
+            created=response.get("created"),
+            updated=response.get("updated"),
         )
 
     async def get_execution_status(
@@ -545,8 +545,8 @@ class AsyncDatalabClient:
                 success=success,
                 results=results,
                 error=error,
-                created_at=response.get("created"),
-                completed_at=response.get("updated") if status in ("COMPLETED", "FAILED") else None,
+                created=response.get("created"),
+                updated=response.get("updated"),
             )
 
             # If complete or failed, return immediately

@@ -85,9 +85,9 @@ def main():
     print(f"Workflow ID:   {execution.workflow_id}")
     print(f"Status:        {execution.status}")
     print(f"Success:       {execution.success}")
-    print(f"Created:       {execution.created_at}")
-    if execution.completed_at:
-        print(f"Completed:     {execution.completed_at}")
+    print(f"Created:       {execution.created}")
+    if execution.updated:
+        print(f"Updated:       {execution.updated}")
     print()
 
     # Handle different statuses
