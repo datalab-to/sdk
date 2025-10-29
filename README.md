@@ -61,6 +61,7 @@ datalab execute-workflow --help
 datalab get-execution-status --help
 datalab list-workflows --help
 datalab get-workflow --help
+datalab visualize-workflow --help
 ```
 
 ## License
