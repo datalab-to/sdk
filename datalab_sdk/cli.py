@@ -519,6 +519,47 @@ def get_workflow(workflow_id: int, api_key: Optional[str], base_url: str):
 @click.command()
 @click.option("--api_key", required=False, help="Datalab API key")
 @click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+def get_step_types(api_key: Optional[str], base_url: str):
+    """Get all available workflow step types"""
+    try:
+        if api_key is None:
+            api_key = settings.DATALAB_API_KEY
+
+        if api_key is None:
+            raise DatalabError(
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+            )
+
+        client = DatalabClient(api_key=api_key, base_url=base_url)
+        response = client.get_step_types()
+
+        step_types = response.get("step_types", [])
+        if not step_types:
+            click.echo("No step types found.")
+            return
+
+        click.echo(f"🔍 Found {len(step_types)} step type(s):\n")
+        for step_type in step_types:
+            click.echo("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            click.echo(f"Key:         {step_type.get('type')}")
+            click.echo(f"Version:     {step_type.get('version')}")
+            click.echo(f"Name:        {step_type.get('name')}")
+            if step_type.get("description"):
+                click.echo(f"Description: {step_type['description']}")
+
+            if step_type.get("settings_schema"):
+                click.echo("\nSettings Schema:")
+                click.echo(json.dumps(step_type["settings_schema"], indent=2))
+            click.echo("")
+
+    except DatalabError as e:
+        click.echo(f"❌ Error: {e}", err=True)
+        sys.exit(1)
+
+
+@click.command()
+@click.option("--api_key", required=False, help="Datalab API key")
+@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
 def list_workflows(api_key: Optional[str], base_url: str):
     """List all workflows for your team"""
     try:
@@ -814,6 +855,7 @@ cli.add_command(convert)
 cli.add_command(ocr)
 cli.add_command(create_workflow)
 cli.add_command(get_workflow)
+cli.add_command(get_step_types)
 cli.add_command(list_workflows)
 cli.add_command(execute_workflow)
 cli.add_command(get_execution_status)

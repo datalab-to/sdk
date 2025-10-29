@@ -402,6 +402,19 @@ class AsyncDatalabClient:
             updated=response.get("updated"),
         )
 
+    async def get_step_types(self) -> dict:
+        """
+        Get all available workflow step types
+
+        Returns:
+            Dictionary containing step_types list with their schemas
+        """
+        response = await self._make_request(
+            "GET",
+            "/api/v1/workflows/step-types",
+        )
+        return response
+
     async def list_workflows(self) -> list[Workflow]:
         """
         List all workflows for the authenticated user's team
@@ -693,6 +706,10 @@ class DatalabClient:
     def get_workflow(self, workflow_id: int) -> Workflow:
         """Get a workflow by ID (sync version)"""
         return self._run_async(self._async_client.get_workflow(workflow_id))
+
+    def get_step_types(self) -> dict:
+        """Get all available workflow step types (sync version)"""
+        return self._run_async(self._async_client.get_step_types())
 
     def list_workflows(self) -> list[Workflow]:
         """List all workflows (sync version)"""
