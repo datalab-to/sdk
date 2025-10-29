@@ -1,0 +1,22 @@
+{
+  "name": "Parse and Segment",
+  "description": "Simple Parse and Segment Workflow",
+  "steps": [
+    {
+      "step_key": "marker_parse",
+      "unique_name": "marker_parse",
+      "settings": {},
+      "depends_on": []
+    },
+    {
+      "step_key": "marker_segment",
+      "unique_name": "marker_segment",
+      "settings": {
+        "segmentation_schema": {
+          "segmentation_strategy": "document_boundary"
+        }
+      },
+      "depends_on": ["marker_parse"]
+    }
+  ]
+}

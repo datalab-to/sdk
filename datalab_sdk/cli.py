@@ -197,7 +197,7 @@ def get_files_to_process(
     if path.is_file():
         # Single file processing
         if file_extensions and path.suffix.lower() not in file_extensions:
-            click.echo(f"❌ Skipping {path}: unsupported file type", err=True)
+            click.echo(f"Skipping {path}: unsupported file type", err=True)
             sys.exit(1)
         return [path]
     else:
@@ -210,10 +210,10 @@ def show_results(results: List[dict], operation: str, output_dir: Path):
     successful = sum(1 for r in results if r["success"])
     failed = len(results) - successful
 
-    click.echo(f"\n📊 {operation} Summary:")
-    click.echo(f"   ✅ Successfully processed: {successful} files")
+    click.echo(f"\n{operation} Summary:")
+    click.echo(f"   Successfully processed: {successful} files")
     if failed > 0:
-        click.echo(f"   ❌ Failed: {failed} files")
+        click.echo(f"   Failed: {failed} files")
 
         # Show failed files
         click.echo("\n   Failed files:")
@@ -221,7 +221,7 @@ def show_results(results: List[dict], operation: str, output_dir: Path):
             if not result["success"]:
                 click.echo(f"      - {result['file_path']}: {result['error']}")
 
-    click.echo(f"\n📁 Output saved to: {output_dir}")
+    click.echo(f"\nOutput saved to: {output_dir}")
 
 
 def process_documents(
@@ -270,10 +270,10 @@ def process_documents(
         to_process = get_files_to_process(path, file_extensions)
 
         if not to_process:
-            click.echo(f"❌ No supported files found in {path}", err=True)
+            click.echo(f"No supported files found in {path}", err=True)
             sys.exit(1)
 
-        click.echo(f"📂 Found {len(to_process)} files to process")
+        click.echo(f"Found {len(to_process)} files to process")
 
         # Create processing options based on method
         if method == "convert":
@@ -317,7 +317,7 @@ def process_documents(
         show_results(results, operation, output_dir)
 
     except DatalabError as e:
-        click.echo(f"❌ Error: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
@@ -465,17 +465,17 @@ def create_workflow(
             name=name, team_id=team_id, steps=workflow_steps
         )
 
-        click.echo(f"✅ Workflow created successfully!")
+        click.echo(f"Workflow created successfully!")
         click.echo(f"   ID: {workflow.id}")
         click.echo(f"   Name: {workflow.name}")
         click.echo(f"   Team ID: {workflow.team_id}")
         click.echo(f"   Steps: {len(workflow.steps)}")
 
     except DatalabError as e:
-        click.echo(f"❌ Error: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     except Exception as e:
-        click.echo(f"❌ Error: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
@@ -497,7 +497,7 @@ def get_workflow(workflow_id: int, api_key: Optional[str], base_url: str):
         client = DatalabClient(api_key=api_key, base_url=base_url)
         workflow = client.get_workflow(workflow_id)
 
-        click.echo(f"📋 Workflow Details:")
+        click.echo(f"Workflow Details:")
         click.echo(f"   ID: {workflow.id}")
         click.echo(f"   Name: {workflow.name}")
         click.echo(f"   Team ID: {workflow.team_id}")
@@ -512,7 +512,48 @@ def get_workflow(workflow_id: int, api_key: Optional[str], base_url: str):
                 click.echo(f"      Depends on: {', '.join(step.depends_on)}")
 
     except DatalabError as e:
-        click.echo(f"❌ Error: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@click.command()
+@click.option("--api_key", required=False, help="Datalab API key")
+@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+def get_step_types(api_key: Optional[str], base_url: str):
+    """Get all available workflow step types"""
+    try:
+        if api_key is None:
+            api_key = settings.DATALAB_API_KEY
+
+        if api_key is None:
+            raise DatalabError(
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+            )
+
+        client = DatalabClient(api_key=api_key, base_url=base_url)
+        response = client.get_step_types()
+
+        step_types = response.get("step_types", [])
+        if not step_types:
+            click.echo("No step types found.")
+            return
+
+        click.echo(f"Found {len(step_types)} step type(s):\n")
+        for step_type in step_types:
+            click.echo("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+            click.echo(f"Key:         {step_type.get('type')}")
+            click.echo(f"Version:     {step_type.get('version')}")
+            click.echo(f"Name:        {step_type.get('name')}")
+            if step_type.get("description"):
+                click.echo(f"Description: {step_type['description']}")
+
+            if step_type.get("settings_schema"):
+                click.echo("\nSettings Schema:")
+                click.echo(json.dumps(step_type["settings_schema"], indent=2))
+            click.echo("")
+
+    except DatalabError as e:
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
@@ -537,7 +578,7 @@ def list_workflows(api_key: Optional[str], base_url: str):
             click.echo("No workflows found.")
             return
 
-        click.echo(f"📋 Found {len(workflows)} workflow(s):\n")
+        click.echo(f"Found {len(workflows)} workflow(s):\n")
         for workflow in workflows:
             click.echo(f"   ID: {workflow.id}")
             click.echo(f"   Name: {workflow.name}")
@@ -547,7 +588,7 @@ def list_workflows(api_key: Optional[str], base_url: str):
             click.echo("")
 
     except DatalabError as e:
-        click.echo(f"❌ Error: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
@@ -595,25 +636,25 @@ def execute_workflow(
 
         client = DatalabClient(api_key=api_key, base_url=base_url)
 
-        click.echo(f"🚀 Triggering workflow execution for workflow {workflow_id}...")
+        click.echo(f"Triggering workflow execution for workflow {workflow_id}...")
         execution = client.execute_workflow(
             workflow_id=workflow_id,
             input_config=input_cfg,
         )
 
-        click.echo(f"\n✅ Successfully triggered workflow execution!")
+        click.echo(f"\nSuccessfully triggered workflow execution!")
         click.echo(f"   Execution ID: {execution.id}")
         click.echo(f"   Status: {execution.status}")
-        click.echo(f"\n💡 To check the status, run:")
+        click.echo(f"\nTo check the status, run:")
         click.echo(f"   datalab get-execution-status --execution_id {execution.id}")
         click.echo(f"\n   Or poll until complete:")
         click.echo(f"   datalab get-execution-status --execution_id {execution.id} --max_polls 300 --poll_interval 2")
 
     except DatalabError as e:
-        click.echo(f"❌ Error: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
     except Exception as e:
-        click.echo(f"❌ Error: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
@@ -663,7 +704,7 @@ def get_execution_status(
             download_results=download,
         )
 
-        click.echo(f"📊 Execution Status:")
+        click.echo(f"Execution Status:")
         click.echo(f"   Execution ID: {execution.id}")
         click.echo(f"   Workflow ID: {execution.workflow_id}")
         click.echo(f"   Status: {execution.status}")
@@ -683,7 +724,7 @@ def get_execution_status(
                     if "output_url" in step_data and not download:
                         click.echo(f"      Status: {step_data.get('status', 'N/A')}")
                         click.echo(f"      Output URL: {step_data.get('output_url')}")
-                        click.echo(f"      💡 Use --download to fetch actual results")
+                        click.echo(f"      Use --download to fetch actual results")
                     else:
                         click.echo(f"      {json.dumps(step_data, indent=8)}")
                 else:
@@ -694,10 +735,10 @@ def get_execution_status(
             output_path = Path(output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             execution.save_output(output_path)
-            click.echo(f"\n📁 Results saved to: {output_path}")
+            click.echo(f"\nResults saved to: {output_path}")
 
     except DatalabError as e:
-        click.echo(f"❌ Error: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
@@ -722,7 +763,7 @@ def visualize_workflow(definition: str):
         steps = workflow_def.get("steps", [])
 
         if not steps:
-            click.echo("⚠️  No steps found in workflow definition")
+            click.echo("No steps found in workflow definition")
             return
 
         # Build dependency graph
@@ -761,13 +802,13 @@ def visualize_workflow(definition: str):
         click.echo(f"\nTotal steps: {len(steps)}")
 
     except json.JSONDecodeError as e:
-        click.echo(f"❌ Invalid JSON: {e}", err=True)
+        click.echo(f"Invalid JSON: {e}", err=True)
         sys.exit(1)
     except KeyError as e:
-        click.echo(f"❌ Missing required field in workflow definition: {e}", err=True)
+        click.echo(f"Missing required field in workflow definition: {e}", err=True)
         sys.exit(1)
     except Exception as e:
-        click.echo(f"❌ Error: {e}", err=True)
+        click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
@@ -814,6 +855,7 @@ cli.add_command(convert)
 cli.add_command(ocr)
 cli.add_command(create_workflow)
 cli.add_command(get_workflow)
+cli.add_command(get_step_types)
 cli.add_command(list_workflows)
 cli.add_command(execute_workflow)
 cli.add_command(get_execution_status)
