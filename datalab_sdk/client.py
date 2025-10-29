@@ -349,6 +349,9 @@ class AsyncDatalabClient:
                 unique_name=step["unique_name"],
                 settings=step["settings"],
                 depends_on=step.get("depends_on", []),
+                id=step.get("id"),
+                version=step.get("version"),
+                name=step.get("name"),
             )
             for step in response.get("steps", [])
         ]
@@ -358,8 +361,8 @@ class AsyncDatalabClient:
             name=response["name"],
             team_id=response["team_id"],
             steps=workflow_steps,
-            created_at=response.get("created_at"),
-            updated_at=response.get("updated_at"),
+            created=response.get("created"),
+            updated=response.get("updated"),
         )
 
     async def get_workflow(self, workflow_id: int) -> Workflow:
@@ -383,6 +386,9 @@ class AsyncDatalabClient:
                 unique_name=step["unique_name"],
                 settings=step["settings"],
                 depends_on=step.get("depends_on", []),
+                id=step.get("id"),
+                version=step.get("version"),
+                name=step.get("name"),
             )
             for step in response.get("steps", [])
         ]
@@ -392,8 +398,8 @@ class AsyncDatalabClient:
             name=response["name"],
             team_id=response["team_id"],
             steps=workflow_steps,
-            created_at=response.get("created_at"),
-            updated_at=response.get("updated_at"),
+            created=response.get("created"),
+            updated=response.get("updated"),
         )
 
     async def list_workflows(self) -> list[Workflow]:
@@ -416,6 +422,9 @@ class AsyncDatalabClient:
                     unique_name=step["unique_name"],
                     settings=step["settings"],
                     depends_on=step.get("depends_on", []),
+                    id=step.get("id"),
+                    version=step.get("version"),
+                    name=step.get("name"),
                 )
                 for step in workflow_data.get("steps", [])
             ]
@@ -426,8 +435,8 @@ class AsyncDatalabClient:
                     name=workflow_data["name"],
                     team_id=workflow_data["team_id"],
                     steps=workflow_steps,
-                    created_at=workflow_data.get("created_at"),
-                    updated_at=workflow_data.get("updated_at"),
+                    created=workflow_data.get("created"),
+                    updated=workflow_data.get("updated"),
                 )
             )
 

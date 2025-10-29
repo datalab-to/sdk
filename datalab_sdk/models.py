@@ -128,17 +128,29 @@ class WorkflowStep:
 
     unique_name: str
     settings: Dict[str, Any]
-    step_key: Optional[str] = '' # TODO: fix API
+    step_key: Optional[str] = ''
     depends_on: List[str] = field(default_factory=list)
+    # Additional fields returned by API
+    id: Optional[int] = None
+    version: Optional[str] = None
+    name: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API requests"""
-        return {
+        data = {
             "step_key": self.step_key,
             "unique_name": self.unique_name,
             "settings": self.settings,
             "depends_on": self.depends_on,
         }
+        # Include optional fields if present
+        if self.id is not None:
+            data["id"] = self.id
+        if self.version:
+            data["version"] = self.version
+        if self.name:
+            data["name"] = self.name
+        return data
 
 
 @dataclass
@@ -149,8 +161,8 @@ class Workflow:
     team_id: int
     steps: List[WorkflowStep]
     id: Optional[int] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
+    created: Optional[str] = None
+    updated: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for API requests"""

@@ -172,7 +172,7 @@ class TestWorkflowMethods:
         }
 
         input_config = InputConfig(
-            type="single_file", file_url="https://example.com/test.pdf"
+            file_urls=["https://example.com/test.pdf"]
         )
 
         async with AsyncDatalabClient(api_key="test-key") as client:
@@ -344,7 +344,7 @@ class TestSyncWorkflowClient:
         }
 
         input_config = InputConfig(
-            type="single_file", file_url="https://example.com/test.pdf"
+            file_urls=["https://example.com/test.pdf"]
         )
 
         client = DatalabClient(api_key="test-key")
@@ -402,17 +402,25 @@ class TestWorkflowModels:
 
     def test_input_config_to_dict(self):
         """Test InputConfig to_dict method"""
-        config = InputConfig(
-            type="single_file",
-            file_url="https://example.com/test.pdf",
-            additional_config={"custom_field": "value"},
+        # Test file_urls format
+        config1 = InputConfig(
+            file_urls=["https://example.com/test.pdf"]
         )
+        result1 = config1.to_dict()
+        assert result1["file_urls"] == ["https://example.com/test.pdf"]
 
-        result = config.to_dict()
-
-        assert result["type"] == "single_file"
-        assert result["file_url"] == "https://example.com/test.pdf"
-        assert result["custom_field"] == "value"
+        # Test bucket format
+        config2 = InputConfig(
+            bucket="my-bucket",
+            prefix="path/",
+            pattern="*.pdf",
+            storage_type="s3"
+        )
+        result2 = config2.to_dict()
+        assert result2["bucket"] == "my-bucket"
+        assert result2["prefix"] == "path/"
+        assert result2["pattern"] == "*.pdf"
+        assert result2["storage_type"] == "s3"
 
     def test_workflow_execution_save_output(self, temp_dir):
         """Test saving workflow execution results"""
