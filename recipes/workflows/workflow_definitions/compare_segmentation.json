@@ -1,0 +1,83 @@
+{
+  "name": "Parallel Marker vs Reducto Comparison",
+  "description": "Compare Marker and Reducto segmentation in parallel",
+  "steps": [
+    {
+      "step_key": "marker_parse",
+      "unique_name": "marker_parse",
+      "settings": {},
+      "depends_on": []
+    },
+    {
+      "step_key": "marker_segment",
+      "unique_name": "marker_segment",
+      "settings": {
+        "segmentation_schema": {
+          "segmentation_strategy": "document_boundary"
+        }
+      },
+      "depends_on": ["marker_parse"]
+    },
+    {
+      "step_key": "api_request",
+      "unique_name": "reducto_upload",
+      "settings": {
+        "url": "https://v1.api.reducto.ai/upload",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "document_url": "{{_internal.file_url}}"
+        },
+        "auth": {
+          "type": "bearer",
+          "token": "YOUR_REDUCTO_API_KEY"
+        },
+        "timeout_seconds": 300
+      },
+      "depends_on": []
+    },
+    {
+      "step_key": "api_request",
+      "unique_name": "reducto_parse",
+      "settings": {
+        "url": "https://v1.api.reducto.ai/parse",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "document_id": "{{reducto_upload.output.body.document_id}}"
+        },
+        "auth": {
+          "type": "bearer",
+          "token": "YOUR_REDUCTO_API_KEY"
+        },
+        "timeout_seconds": 600
+      },
+      "depends_on": ["reducto_upload"]
+    },
+    {
+      "step_key": "api_request",
+      "unique_name": "reducto_split",
+      "settings": {
+        "url": "https://v1.api.reducto.ai/split",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "document_id": "{{reducto_parse.output.body.document_id}}",
+          "mode": "page"
+        },
+        "auth": {
+          "type": "bearer",
+          "token": "YOUR_REDUCTO_API_KEY"
+        },
+        "timeout_seconds": 300
+      },
+      "depends_on": ["reducto_parse"]
+    }
+  ]
+}
