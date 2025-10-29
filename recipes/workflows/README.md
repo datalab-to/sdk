@@ -20,7 +20,7 @@ Get your API key from: https://www.datalab.to/app/keys
 
 - **`workflow_definitions/`** - JSON workflow definitions (reusable recipes). The [`README file within`](./workflow_Definitions/README.md) explains what each definition is to give you ideas on making your own.
 - **`end_to_end_workflow.py`** - Generic runner for any workflow definition that handles the full cycle of creating a workflow, executing it, and polling for completion.
-- **`individual_examples/`** - Individual operation scripts (create, execute, poll, etc.) so you can see how they work individually.
+- **`workflow_api_tutorial/`** - Individual operation scripts (create, execute, poll, etc.) so you can see how they work individually.
 
 ## Visualizing Workflows
 
@@ -76,7 +76,7 @@ This single command:
 You can optionally create just the workflow (without executing it) using the example script (which shows you how to integrate it into your own python code) like this:
 
 ```bash
-python recipes/workflows/individual_examples/create_workflow.py \
+python recipes/workflows/workflow_api_tutorial/create_workflow.py \
     --definition workflow_definitions/my_workflow.json
 ```
 

@@ -59,7 +59,7 @@ python recipes/workflows/end_to_end_workflow.py \
     --save results.json
 
 # Or step-by-step
-python recipes/workflows/individual_examples/create_workflow.py \
+python recipes/workflows/workflow_api_tutorial/create_workflow.py \
     --definition workflow_definitions/eval_segmentation.json \
     --replace YOUR_REDUCTO_API_KEY your_key_here
 ```
@@ -97,7 +97,7 @@ python recipes/workflows/end_to_end_workflow.py \
     --file_url https://www.novonordisk.com/content/dam/nncorp/global/en/investors/irmaterial/annual_report/2024/novo-nordisk-form-20-f-2023.pdf
 
 # Or step-by-step
-python recipes/workflows/individual_examples/create_workflow.py \
+python recipes/workflows/workflow_api_tutorial/create_workflow.py \
     --definition workflow_definitions/segment_parallel_extraction.json
 ```
 
@@ -133,7 +133,7 @@ python recipes/workflows/end_to_end_workflow.py \
     --save results.json
 
 # Or step-by-step
-python recipes/workflows/individual_examples/create_workflow.py \
+python recipes/workflows/workflow_api_tutorial/create_workflow.py \
     --definition workflow_definitions/slack_alert.json \
     --replace YOUR_SLACK_BOT_TOKEN xoxb-your-token \
     --replace YOUR_SLACK_CHANNEL_ID <YOUR_CHANNEL_ID>

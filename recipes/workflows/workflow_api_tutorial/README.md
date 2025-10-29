@@ -1,4 +1,4 @@
-# Individual Examples - Python Integration Reference
+# Workflow API Tutorial - Python Integration Reference
 
 These scripts demonstrate how to integrate Datalab workflows into your Python applications.
 

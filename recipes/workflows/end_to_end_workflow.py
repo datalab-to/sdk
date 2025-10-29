@@ -234,7 +234,7 @@ def main():
     elif final_execution.status == "IN_PROGRESS":
         print(f"⏱️  Workflow still running (timed out after {total_time}s)")
         print(f"\nContinue polling:")
-        print(f"  python recipes/workflows/individual_examples/poll_workflow.py \\")
+        print(f"  python recipes/workflows/workflow_api_tutorial/poll_workflow.py \\")
         print(f"      --execution_id {final_execution.id}")
 
     else:
