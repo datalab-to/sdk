@@ -20,15 +20,44 @@
     },
     {
       "step_key": "api_request",
-      "unique_name": "reducto_upload",
+      "unique_name": "reducto_parse",
       "settings": {
-        "url": "https://v1.api.reducto.ai/upload",
+        "url": "https://platform.reducto.ai/parse",
         "method": "POST",
         "headers": {
           "Content-Type": "application/json"
         },
         "body": {
-          "document_url": "{{_internal.file_url}}"
+          "input": "{{_internal.file_url}}",
+          "retrieval": {
+            "chunking": "page"
+          }
+        },
+        "auth": {
+          "type": "bearer",
+          "token": "YOUR_REDUCTO_API_KEY"
+        },
+        "timeout_seconds": 900
+      },
+      "depends_on": []
+    },
+    {
+      "step_key": "api_request",
+      "unique_name": "reducto_split",
+      "settings": {
+        "url": "https://platform.reducto.ai/split",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "input": "{{_internal.file_url}}",
+          "split_description": [
+            {
+              "name": "content_sections",
+              "description": "Main content sections of the document"
+            }
+          ]
         },
         "auth": {
           "type": "bearer",
@@ -37,47 +66,6 @@
         "timeout_seconds": 300
       },
       "depends_on": []
-    },
-    {
-      "step_key": "api_request",
-      "unique_name": "reducto_parse",
-      "settings": {
-        "url": "https://v1.api.reducto.ai/parse",
-        "method": "POST",
-        "headers": {
-          "Content-Type": "application/json"
-        },
-        "body": {
-          "document_id": "{{reducto_upload.output.body.document_id}}"
-        },
-        "auth": {
-          "type": "bearer",
-          "token": "YOUR_REDUCTO_API_KEY"
-        },
-        "timeout_seconds": 600
-      },
-      "depends_on": ["reducto_upload"]
-    },
-    {
-      "step_key": "api_request",
-      "unique_name": "reducto_split",
-      "settings": {
-        "url": "https://v1.api.reducto.ai/split",
-        "method": "POST",
-        "headers": {
-          "Content-Type": "application/json"
-        },
-        "body": {
-          "document_id": "{{reducto_parse.output.body.document_id}}",
-          "mode": "page"
-        },
-        "auth": {
-          "type": "bearer",
-          "token": "YOUR_REDUCTO_API_KEY"
-        },
-        "timeout_seconds": 300
-      },
-      "depends_on": ["reducto_parse"]
     }
   ]
 }
