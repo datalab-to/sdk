@@ -1,0 +1,41 @@
+{
+  "name": "Parse, Segment, Extract, Aggregate, then Post to Slack",
+  "description": "Full pipeline: Parse documents, segment into sections, extract data from multiple segments in parallel, aggregate results, and post to Slack",
+  "steps": [
+    {
+      "step_key": "marker_parse",
+      "unique_name": "parse",
+      "settings": {},
+      "depends_on": []
+    },
+    {
+      "step_key": "api_request",
+      "unique_name": "post_to_slack",
+      "settings": {
+        "url": "https://slack.com/api/chat.postMessage",
+        "method": "POST",
+        "headers": {
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "channel": "<YOUR_SLACK_CHANNEL_ID>",
+          "text": "Workflow completed!",
+          "blocks": [
+            {
+              "type": "section",
+              "text": {
+                "type": "mrkdwn",
+                "text": "Ran some extractions."
+              }
+            }
+          ]
+        },
+        "auth": {
+          "type": "bearer",
+          "token": "YOUR_SLACK_BOT_TOKEN"
+        }
+      },
+      "depends_on": ["parse"]
+    }
+  ]
+}
