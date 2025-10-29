@@ -345,13 +345,10 @@ class AsyncDatalabClient:
         # Parse response into Workflow object
         workflow_steps = [
             WorkflowStep(
-                step_key=step["step_key"],
                 unique_name=step["unique_name"],
                 settings=step["settings"],
                 depends_on=step.get("depends_on", []),
-                id=step.get("id"),
-                version=step.get("version"),
-                name=step.get("name"),
+                id=step.get("id")
             )
             for step in response.get("steps", [])
         ]
