@@ -54,7 +54,7 @@ class TestConvertCommand:
                 )
 
                 assert result.exit_code == 0
-                assert "✅ Successfully processed" in result.output
+                assert "Successfully processed" in result.output
 
                 # Verify client was called correctly
                 mock_client_class.assert_called_once()
@@ -79,7 +79,7 @@ class TestConvertCommand:
                 settings.DATALAB_API_KEY = None
 
                 assert result.exit_code == 0
-                assert "✅ Successfully processed" in result.output
+                assert "Successfully processed" in result.output
 
             finally:
                 os.unlink(tmp_file.name)
@@ -131,7 +131,7 @@ class TestOCRCommand:
                 )
 
                 assert result.exit_code == 0
-                assert "✅ Successfully processed: 2 files" in result.output
+                assert "Successfully processed: 2 files" in result.output
 
                 # Verify client was called correctly
                 mock_client_class.assert_called_once()
@@ -163,7 +163,7 @@ class TestOCRCommand:
                 )
 
                 assert result.exit_code == 0
-                assert "✅ Successfully processed: 2 files" in result.output
+                assert "Successfully processed: 2 files" in result.output
 
             finally:
                 os.unlink(tmp_file.name)
@@ -193,5 +193,5 @@ class TestOCRCommand:
             )
 
             assert result.exit_code == 0
-            assert "📊 OCR Summary:" in result.output
-            assert "✅ Successfully processed: 2 files" in result.output
+            assert "OCR Summary:" in result.output
+            assert "Successfully processed: 2 files" in result.output
