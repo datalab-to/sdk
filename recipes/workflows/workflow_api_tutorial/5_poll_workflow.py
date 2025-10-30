@@ -93,9 +93,9 @@ def main():
     # Handle different statuses
     if execution.status == "COMPLETED":
         print("✅ Workflow completed successfully!")
-        if execution.results:
+        if execution.steps:
             print("\n📋 Results:")
-            print(json.dumps(execution.results, indent=2))
+            print(json.dumps(execution.steps, indent=2))
 
             # Save if requested
             if args.save:

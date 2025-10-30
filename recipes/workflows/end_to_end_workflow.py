@@ -165,9 +165,9 @@ def main():
     if final_execution.status == "COMPLETED":
         print("✅ Workflow completed successfully!\n")
 
-        if final_execution.results:
+        if final_execution.steps:
             print("📊 Step Results:")
-            for step_name, step_data in final_execution.results.items():
+            for step_name, step_data in final_execution.steps.items():
                 status = step_data.get('status', 'N/A')
                 print(f"\n  {step_name}: {status}")
 
@@ -196,9 +196,9 @@ def main():
         if final_execution.error:
             print(f"\nError: {final_execution.error}")
 
-        if final_execution.results:
+        if final_execution.steps:
             print(f"\n⚠️  Partial results available:")
-            print(json.dumps(final_execution.results, indent=2))
+            print(json.dumps(final_execution.steps, indent=2))
 
     elif final_execution.status == "IN_PROGRESS":
         print(f"⏱️  Workflow still running (timed out after {total_time}s)")
