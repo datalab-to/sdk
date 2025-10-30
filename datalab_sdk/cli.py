@@ -710,25 +710,32 @@ def get_execution_status(
         click.echo(f"   Status: {execution.status}")
         click.echo(f"   Success: {execution.success}")
         click.echo(f"   Created: {execution.created}")
-        if execution.completed:
-            click.echo(f"   Completed: {execution.completed}")
 
-        if execution.error:
-            click.echo(f"   Error: {execution.error}")
-
-        if execution.results:
+        if execution.steps:
             click.echo(f"\n   Step Results:")
-            for step_name, step_data in execution.results.items():
+            for step_name, step_data in execution.steps.items():
                 click.echo(f"\n   [{step_name}]")
-                if isinstance(step_data, dict):
-                    if "output_url" in step_data and not download:
-                        click.echo(f"      Status: {step_data.get('status', 'N/A')}")
-                        click.echo(f"      Output URL: {step_data.get('output_url')}")
-                        click.echo(f"      Use --download to fetch actual results")
+
+                # Iterate through file_ids/aggregated keys
+                for file_key, file_step_data in step_data.items():
+                    if isinstance(file_step_data, dict):
+                        click.echo(f"\n      File/Group: {file_key}")
+                        click.echo(f"         Step ID: {file_step_data.get('id', 'N/A')}")
+                        click.echo(f"         Status: {file_step_data.get('status', 'N/A')}")
+
+                        if file_step_data.get('started_at'):
+                            click.echo(f"         Started: {file_step_data.get('started_at')}")
+                        if file_step_data.get('finished_at'):
+                            click.echo(f"         Finished: {file_step_data.get('finished_at')}")
+                        if file_step_data.get('file_ids'):
+                            click.echo(f"         Files: {', '.join(file_step_data.get('file_ids'))}")
+
+                        if "output_url" in file_step_data and not download:
+                            click.echo(f"         Output URL: {file_step_data.get('output_url')}")
+                        elif download and "downloaded_data" in file_step_data:
+                            click.echo(f"         Results: {json.dumps(file_step_data['downloaded_data'], indent=12)}")
                     else:
-                        click.echo(f"      {json.dumps(step_data, indent=8)}")
-                else:
-                    click.echo(f"      {step_data}")
+                        click.echo(f"      {file_step_data}")
 
         # Save output if requested
         if output:
