@@ -529,21 +529,22 @@ class AsyncDatalabClient:
 
             # Optionally download results from presigned URLs
             if download_results and steps_data and status == "COMPLETED":
-                results = await self._download_step_results(steps_data)
+                steps = await self._download_step_results(steps_data)
             else:
                 # Keep the raw step data with URLs
-                results = steps_data
+                steps = steps_data
 
             # Determine success based on status
             success = status == "COMPLETED"
             error = response.get("error")
 
-            # If any step failed, extract error
+            # If any step failed, extract error from nested structure
             if status == "FAILED" or not success:
-                failed_steps = [
-                    name for name, step in steps_data.items()
-                    if step.get("status") == "FAILED"
-                ]
+                failed_steps = []
+                for step_name, step_info in steps_data.items():
+                    for file_key, file_step_data in step_info.items():
+                        if isinstance(file_step_data, dict) and file_step_data.get("status") == "FAILED":
+                            failed_steps.append(f"{step_name}[{file_key}]")
                 if failed_steps and not error:
                     error = f"Step(s) failed: {', '.join(failed_steps)}"
 
@@ -553,7 +554,7 @@ class AsyncDatalabClient:
                 status=status,
                 input_config=response.get("input_config", {}),
                 success=success,
-                results=results,
+                steps=steps,
                 error=error,
                 created=response.get("created"),
                 updated=response.get("updated"),
@@ -575,7 +576,8 @@ class AsyncDatalabClient:
         Download results from presigned URLs for each step
 
         Args:
-            steps_data: Dictionary of step data with output_url fields
+            steps_data: Dictionary of step data with nested structure:
+                       step_name -> file_id/aggregated -> step_data
 
         Returns:
             Dictionary with downloaded results for each step
@@ -583,32 +585,43 @@ class AsyncDatalabClient:
         results = {}
 
         for step_name, step_info in steps_data.items():
-            output_url = step_info.get("output_url")
-            if output_url:
-                try:
-                    # Download from presigned URL
-                    import aiohttp
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(output_url) as resp:
-                            if resp.status == 200:
-                                content_type = resp.headers.get('Content-Type', '')
-                                if 'json' in content_type:
-                                    results[step_name] = await resp.json()
-                                else:
-                                    results[step_name] = await resp.text()
-                            else:
-                                results[step_name] = {
-                                    "error": f"Failed to download: HTTP {resp.status}",
-                                    "output_url": output_url
-                                }
-                except Exception as e:
-                    results[step_name] = {
-                        "error": f"Download failed: {str(e)}",
-                        "output_url": output_url
-                    }
-            else:
-                # Keep the step info if no URL available
-                results[step_name] = step_info
+            results[step_name] = {}
+
+            # Iterate through file_ids/aggregated keys
+            for file_key, file_step_data in step_info.items():
+                if isinstance(file_step_data, dict):
+                    output_url = file_step_data.get("output_url")
+                    if output_url:
+                        try:
+                            # Download from presigned URL
+                            async with aiohttp.ClientSession() as session:
+                                async with session.get(output_url) as resp:
+                                    if resp.status == 200:
+                                        content_type = resp.headers.get('Content-Type', '')
+                                        if 'json' in content_type:
+                                            downloaded_data = await resp.json()
+                                        else:
+                                            downloaded_data = await resp.text()
+                                        # Merge downloaded data with metadata
+                                        results[step_name][file_key] = {
+                                            **file_step_data,
+                                            "downloaded_data": downloaded_data
+                                        }
+                                    else:
+                                        results[step_name][file_key] = {
+                                            **file_step_data,
+                                            "error": f"Failed to download: HTTP {resp.status}"
+                                        }
+                        except Exception as e:
+                            results[step_name][file_key] = {
+                                **file_step_data,
+                                "error": f"Download failed: {str(e)}"
+                            }
+                    else:
+                        # Keep the step info if no URL available
+                        results[step_name][file_key] = file_step_data
+                else:
+                    results[step_name][file_key] = file_step_data
 
         return results
 
