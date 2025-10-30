@@ -430,7 +430,7 @@ class TestWorkflowModels:
             status="complete",
             success=True,
             input_config={"type": "single_file", "file_url": "https://example.com/test.pdf"},
-            results={"output": "test result"},
+            steps={"output": "test result"},
         )
 
         output_path = temp_dir / "execution_result"

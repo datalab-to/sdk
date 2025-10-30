@@ -490,7 +490,7 @@ class AsyncDatalabClient:
             status=response.get("status", "processing"),
             input_config=input_config.to_dict(),
             success=response.get("success", True),
-            results=response.get("results"),
+            steps=response.get("results"),
             error=response.get("error"),
             created=response.get("created"),
             updated=response.get("updated"),
