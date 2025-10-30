@@ -189,7 +189,7 @@ class TestWorkflowMethods:
                 assert execution.workflow_id == 1
                 assert execution.status == "processing"
                 assert execution.success is True
-                assert execution.results is None  # No results yet
+                assert execution.steps is None  # No results yet
 
     @pytest.mark.asyncio
     async def test_get_execution_status_success(self):
@@ -262,7 +262,7 @@ class TestWorkflowMethods:
                 # Verify result
                 assert execution.status == "COMPLETED"
                 assert execution.success is True
-                assert "step1" in execution.results
+                assert "step1" in execution.steps
                 assert mock_request.call_count == 2  # 2 status checks
 
     @pytest.mark.asyncio
@@ -448,4 +448,4 @@ class TestWorkflowModels:
 
         assert data["id"] == 1
         assert data["status"] == "complete"
-        assert data["results"] == {"output": "test result"}
+        assert data["steps"] == {"output": "test result"}
