@@ -244,6 +244,20 @@ class WorkflowExecution:
 
 
 @dataclass
+class UploadedFileMetadata:
+    """Metadata for an uploaded file"""
+
+    file_id: int
+    original_filename: str
+    content_type: str
+    reference: str
+    upload_status: str  # "pending", "completed", "failed"
+    file_size: Optional[int] = None
+    created: Optional[str] = None
+    error: Optional[str] = None
+
+
+@dataclass
 class OCRResult:
     """Result from OCR processing"""
 
