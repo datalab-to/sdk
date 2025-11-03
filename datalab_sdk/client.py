@@ -31,6 +31,7 @@ from datalab_sdk.models import (
     WorkflowStep,
     WorkflowExecution,
     InputConfig,
+    UploadedFileMetadata,
 )
 from datalab_sdk.settings import settings
 
@@ -625,6 +626,164 @@ class AsyncDatalabClient:
 
         return results
 
+    async def _upload_single_file(
+        self,
+        file_path: Union[str, Path],
+    ) -> UploadedFileMetadata:
+        """
+        Internal method to upload a single file to Datalab storage
+
+        This method handles the complete upload flow:
+        1. Request a presigned upload URL
+        2. Upload the file to the presigned URL
+        3. Confirm the upload with the API
+
+        Args:
+            file_path: Path to the local file to upload
+
+        Returns:
+            UploadedFileMetadata object with file information including file_id and reference
+        """
+        file_path = Path(file_path)
+
+        if not file_path.exists():
+            raise DatalabFileError(f"File not found: {file_path}")
+
+        # Determine content type
+        mime_type, _ = mimetypes.guess_type(str(file_path))
+        if not mime_type:
+            extension = file_path.suffix.lower()
+            mime_type = MIMETYPE_MAP.get(extension, "application/octet-stream")
+
+        # Step 1: Request presigned upload URL
+        response = await self._make_request(
+            "POST",
+            "/api/v1/files/upload",
+            json={
+                "filename": file_path.name,
+                "content_type": mime_type,
+            },
+        )
+
+        file_id = response["file_id"]
+        upload_url = response["upload_url"]
+        reference = response["reference"]
+
+        # Step 2: Upload file to presigned URL
+        try:
+            file_data = file_path.read_bytes()
+            async with aiohttp.ClientSession() as session:
+                async with session.put(
+                    upload_url,
+                    data=file_data,
+                    headers={"Content-Type": mime_type},
+                ) as upload_response:
+                    upload_response.raise_for_status()
+        except Exception as e:
+            raise DatalabFileError(f"Failed to upload file to storage: {str(e)}")
+
+        # Step 3: Confirm upload with API
+        try:
+            confirm_response = await self._make_request(
+                "GET",
+                f"/api/v1/files/{file_id}/confirm",
+            )
+        except Exception as e:
+            raise DatalabAPIError(f"Failed to confirm file upload: {str(e)}")
+
+        # Return file metadata
+        return UploadedFileMetadata(
+            file_id=file_id,
+            original_filename=file_path.name,
+            content_type=mime_type,
+            reference=reference,
+            upload_status="completed",
+            file_size=file_path.stat().st_size,
+            created=confirm_response.get("created"),
+        )
+
+    async def upload_files(
+        self,
+        file_paths: Union[str, Path, list[Union[str, Path]]],
+    ) -> Union[UploadedFileMetadata, list[UploadedFileMetadata]]:
+        """
+        Upload one or more files to Datalab storage
+
+        This method handles the complete upload flow for each file:
+        1. Request a presigned upload URL
+        2. Upload the file to the presigned URL
+        3. Confirm the upload with the API
+
+        Multiple files are uploaded concurrently for better performance.
+
+        Args:
+            file_paths: Single file path or list of file paths to upload
+
+        Returns:
+            If single file: UploadedFileMetadata object
+            If multiple files: List of UploadedFileMetadata objects
+
+        Example:
+            # Upload single file
+            metadata = client.upload_files("document.pdf")
+
+            # Upload multiple files
+            metadatas = client.upload_files(["doc1.pdf", "doc2.pdf"])
+        """
+        # Handle single file path
+        if isinstance(file_paths, (str, Path)):
+            return await self._upload_single_file(file_paths)
+
+        # Handle list of file paths
+        tasks = [self._upload_single_file(file_path) for file_path in file_paths]
+        return await asyncio.gather(*tasks)
+
+    async def list_files(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        List uploaded files for the authenticated user's team
+
+        Args:
+            limit: Maximum number of files to return (default: 50)
+            offset: Offset for pagination (default: 0)
+
+        Returns:
+            Dictionary containing:
+                - files: List of UploadedFileMetadata objects
+                - total: Total number of files
+                - limit: Limit used
+                - offset: Offset used
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/files?limit={limit}&offset={offset}",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+        )
+
+        # Parse file metadata
+        files = [
+            UploadedFileMetadata(
+                file_id=file_data["file_id"],
+                original_filename=file_data["original_filename"],
+                content_type=file_data["content_type"],
+                reference=file_data["reference"],
+                upload_status=file_data["upload_status"],
+                file_size=file_data.get("file_size"),
+                created=file_data.get("created"),
+            )
+            for file_data in response.get("files", [])
+        ]
+
+        return {
+            "files": files,
+            "total": response.get("total", 0),
+            "limit": response.get("limit", limit),
+            "offset": response.get("offset", offset),
+        }
+
 
 class DatalabClient:
     """Synchronous wrapper around AsyncDatalabClient"""
@@ -753,4 +912,58 @@ class DatalabClient:
                 poll_interval=poll_interval,
                 download_results=download_results,
             )
+        )
+
+    # File upload methods (sync)
+    def upload_files(
+        self,
+        file_paths: Union[str, Path, list[Union[str, Path]]],
+    ) -> Union[UploadedFileMetadata, list[UploadedFileMetadata]]:
+        """
+        Upload one or more files to Datalab storage (sync version)
+
+        This method handles the complete upload flow for each file:
+        1. Request a presigned upload URL
+        2. Upload the file to the presigned URL
+        3. Confirm the upload with the API
+
+        Multiple files are uploaded concurrently for better performance.
+
+        Args:
+            file_paths: Single file path or list of file paths to upload
+
+        Returns:
+            If single file: UploadedFileMetadata object
+            If multiple files: List of UploadedFileMetadata objects
+
+        Example:
+            # Upload single file
+            metadata = client.upload_files("document.pdf")
+
+            # Upload multiple files
+            metadatas = client.upload_files(["doc1.pdf", "doc2.pdf"])
+        """
+        return self._run_async(self._async_client.upload_files(file_paths=file_paths))
+
+    def list_files(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        List uploaded files for the authenticated user's team (sync version)
+
+        Args:
+            limit: Maximum number of files to return (default: 50)
+            offset: Offset for pagination (default: 0)
+
+        Returns:
+            Dictionary containing:
+                - files: List of UploadedFileMetadata objects
+                - total: Total number of files
+                - limit: Limit used
+                - offset: Offset used
+        """
+        return self._run_async(
+            self._async_client.list_files(limit=limit, offset=offset)
         )
