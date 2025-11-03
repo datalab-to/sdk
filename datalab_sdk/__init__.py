@@ -16,6 +16,7 @@ from .models import (
     WorkflowStep,
     WorkflowExecution,
     InputConfig,
+    UploadedFileMetadata,
 )
 from .settings import settings
 
@@ -34,4 +35,5 @@ __all__ = [
     "WorkflowStep",
     "WorkflowExecution",
     "InputConfig",
+    "UploadedFileMetadata",
 ]
