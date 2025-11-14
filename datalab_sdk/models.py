@@ -83,11 +83,6 @@ class ConversionResult:
         """Save the conversion output to files"""
         output_path = Path(output_path)
 
-        # If this is a spreadsheet result, save HTML viewer instead
-        if self._is_spreadsheet_result():
-            self.save_html_viewer(output_path)
-            return
-
         # Save main content
         if self.markdown:
             with open(output_path.with_suffix(".md"), "w", encoding="utf-8") as f:
@@ -130,19 +125,6 @@ class ConversionResult:
             ) as f:
                 json.dump(self.metadata, f, indent=2)
 
-    def _is_spreadsheet_result(self) -> bool:
-        """Check if this result contains spreadsheet table data."""
-        if not isinstance(self.json, dict):
-            return False
-        # Check for nested structure: json.children[].children[]
-        if "children" in self.json:
-            for page in self.json.get("children", []):
-                if isinstance(page, dict) and "children" in page:
-                    for block in page.get("children", []):
-                        if isinstance(block, dict) and block.get("block_type") == "Table":
-                            return True
-        return False
-
     def _extract_blocks(self) -> List[Dict[str, Any]]:
         """Extract all blocks from the nested JSON structure."""
         blocks = []
@@ -153,7 +135,7 @@ class ConversionResult:
                         blocks.append(block)
         return blocks
 
-    def get_tables_by_sheet(self) -> Dict[str, List[Dict[str, Any]]]:
+    def get_tables_by_page(self) -> Dict[str, List[Dict[str, Any]]]:
         """
         Extract tables grouped by sheet name.
 
@@ -205,14 +187,10 @@ class ConversionResult:
                     return 0
         return 0
 
-    def get_sheet_names(self) -> List[str]:
-        """Get list of sheet names that contain tables."""
-        return sorted(self.get_tables_by_sheet().keys())
-
     def get_table_count(self) -> int:
-        """Get total number of tables across all sheets."""
-        tables_by_sheet = self.get_tables_by_sheet()
-        return sum(len(tables) for tables in tables_by_sheet.values())
+        """Get total number of tables across all pages (sheets)."""
+        tables_by_page = self.get_tables_by_page()
+        return sum(len(tables) for tables in tables_by_page.values())
 
     def generate_html_viewer(self, title: str = "XLSX Tables") -> str:
         """
@@ -224,7 +202,7 @@ class ConversionResult:
         Returns:
             HTML string with tabs per sheet
         """
-        sheets = self.get_tables_by_sheet()
+        sheets = self.get_tables_by_page()
         return generate_spreadsheet_html_viewer(sheets, title)
 
     def save_html_viewer(

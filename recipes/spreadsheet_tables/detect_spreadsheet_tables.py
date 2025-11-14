@@ -23,7 +23,7 @@ def main():
 
     args = parser.parse_args()
 
-    API_URL = "https://api.datalab.to"
+    API_URL = "https://stage.datalab.to"
     xlsx_path = Path(args.xlsx_file)
     if not xlsx_path.exists():
         print(f"Error: File not found: {xlsx_path}", file=sys.stderr)
@@ -53,15 +53,14 @@ def main():
 
         print(f"✓ Processing completed successfully")
 
-        tables_by_sheet = result.get_tables_by_sheet()
-        sheet_names = result.get_sheet_names()
+        tables_by_page = result.get_tables_by_page()
         table_count = result.get_table_count()
 
         if table_count > 0:
-            print(f"Found {table_count} table(s) across {len(sheet_names)} sheet(s):")
-            for sheet_name in sheet_names:
-                tables = tables_by_sheet[sheet_name]
-                print(f"  - {sheet_name}: {len(tables)} table(s)")
+            print(f"Found {table_count} table(s) across {len(tables_by_page)} page(s):")
+            for page_name in tables_by_page:
+                tables = tables_by_page[page_name]
+                print(f"  - {page_name}: {len(tables)} table(s)")
 
             #
             # Pretty print detected tables in HTML viewer.
