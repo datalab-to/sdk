@@ -25,7 +25,12 @@ class ProcessingOptions:
             if value is not None:
                 if isinstance(value, bool):
                     form_data[key] = (None, value)
-                elif isinstance(value, (dict, list)):
+                elif key == "extras" and isinstance(value, list):
+                    # Handle extras as comma-separated string (handled separately in client)
+                    form_data[key] = (None, ",".join(value))
+                elif isinstance(value, dict):
+                    form_data[key] = (None, json.dumps(value, indent=2))
+                elif isinstance(value, list):
                     form_data[key] = (None, json.dumps(value, indent=2))
                 else:
                     form_data[key] = (None, value)
@@ -44,9 +49,14 @@ class ConvertOptions(ProcessingOptions):
     use_llm: bool = False
     strip_existing_ocr: bool = False
     disable_image_extraction: bool = False
+    disable_ocr_math: bool = False
     block_correction_prompt: Optional[str] = None
     additional_config: Optional[Dict[str, Any]] = None
     page_schema: Optional[Dict[str, Any]] = None
+    segmentation_schema: Optional[str] = None
+    workflowstepdata_id: Optional[int] = None
+    extras: Optional[List[str]] = None  # e.g., ["track_changes", "chart_understanding"]
+    save_checkpoint: bool = False
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "fast"  # fast, balanced, accurate
 
@@ -67,11 +77,17 @@ class ConversionResult:
     json: Optional[Dict[str, Any]] = None
     chunks: Optional[Dict[str, Any]] = None
     extraction_schema_json: Optional[str] = None
+    segmentation_results: Optional[Dict[str, Any]] = None
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     page_count: Optional[int] = None
     status: str = "complete"
+    parse_quality_score: Optional[float] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
+    runtime: Optional[float] = None
+    checkpoint_id: Optional[str] = None
+    versions: Optional[Dict[str, Any]] = None
 
     def save_output(
         self, output_path: Union[str, Path], save_images: bool = True
@@ -266,6 +282,8 @@ class OCRResult:
     error: Optional[str] = None
     page_count: Optional[int] = None
     status: str = "complete"
+    cost_breakdown: Optional[Dict[str, Any]] = None
+    versions: Optional[Dict[str, Any]] = None
 
     def get_text(self, page_num: Optional[int] = None) -> str:
         """Extract text from OCR results"""

@@ -207,11 +207,25 @@ class AsyncDatalabClient:
             raise ValueError("Either file_path or file_url must be provided")
 
         if options:
+            # Handle extras separately to convert list to comma-separated string
+            extras_value = None
+            if hasattr(options, 'extras') and options.extras:
+                extras_value = options.extras
+                # Temporarily remove from options to avoid double processing
+                original_extras = options.extras
+                options.extras = None
+            
             for key, value in options.to_form_data().items():
                 if isinstance(value, tuple):
                     form_data.add_field(key, str(value[1]))
                 else:
                     form_data.add_field(key, str(value))
+            
+            # Add extras as comma-separated string if present
+            if extras_value:
+                form_data.add_field("extras", ",".join(extras_value))
+                # Restore original value
+                options.extras = original_extras
 
         return form_data
 
@@ -256,11 +270,17 @@ class AsyncDatalabClient:
             json=result_data.get("json"),
             chunks=result_data.get("chunks"),
             extraction_schema_json=result_data.get("extraction_schema_json"),
+            segmentation_results=result_data.get("segmentation_results"),
             images=result_data.get("images"),
             metadata=result_data.get("metadata"),
             error=result_data.get("error"),
             page_count=result_data.get("page_count"),
             status=result_data.get("status", "complete"),
+            parse_quality_score=result_data.get("parse_quality_score"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            runtime=result_data.get("runtime"),
+            checkpoint_id=result_data.get("checkpoint_id"),
+            versions=result_data.get("versions"),
         )
 
         # Save output if requested
@@ -306,6 +326,8 @@ class AsyncDatalabClient:
             error=result_data.get("error"),
             page_count=result_data.get("page_count"),
             status=result_data.get("status", "complete"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            versions=result_data.get("versions"),
         )
 
         # Save output if requested
@@ -784,6 +806,219 @@ class AsyncDatalabClient:
             "offset": response.get("offset", offset),
         }
 
+    async def get_file_metadata(
+        self,
+        file_id: int,
+    ) -> UploadedFileMetadata:
+        """
+        Get metadata for an uploaded file
+
+        Args:
+            file_id: ID of the file to retrieve
+
+        Returns:
+            UploadedFileMetadata object with file information
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/files/{file_id}",
+        )
+
+        return UploadedFileMetadata(
+            file_id=response["file_id"],
+            original_filename=response["original_filename"],
+            content_type=response["content_type"],
+            reference=response["reference"],
+            upload_status=response["upload_status"],
+            file_size=response.get("file_size"),
+            created=response.get("created"),
+        )
+
+    async def get_file_download_url(
+        self,
+        file_id: int,
+        expires_in: int = 3600,
+    ) -> Dict[str, Any]:
+        """
+        Generate a presigned URL for downloading a file
+
+        Args:
+            file_id: ID of the file to download
+            expires_in: URL expiry time in seconds (default: 3600, max: 86400)
+
+        Returns:
+            Dictionary containing:
+                - download_url: Presigned URL for downloading
+                - expires_in: URL expiry time in seconds
+                - file_id: File ID
+                - original_filename: Original filename
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/files/{file_id}/download?expires_in={expires_in}",
+        )
+
+        return {
+            "download_url": response["download_url"],
+            "expires_in": response["expires_in"],
+            "file_id": response["file_id"],
+            "original_filename": response["original_filename"],
+        }
+
+    async def delete_file(
+        self,
+        file_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Delete an uploaded file
+
+        Args:
+            file_id: ID of the file to delete
+
+        Returns:
+            Dictionary with success status and message
+        """
+        response = await self._make_request(
+            "DELETE",
+            f"/api/v1/files/{file_id}",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "message": response.get("message", f"File {file_id} deleted successfully"),
+        }
+
+    async def get_thumbnails(
+        self,
+        lookup_key: str,
+        page_range: Optional[str] = None,
+        thumb_width: int = 300,
+        track_changes: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        Get thumbnails for a processed document
+
+        Args:
+            lookup_key: Lookup key from a previous API request
+            page_range: Optional page range (e.g., "0-2,5-10")
+            thumb_width: Width of thumbnails in pixels (default: 300)
+            track_changes: Whether to track changes (default: False)
+
+        Returns:
+            Dictionary containing:
+                - success: Whether the request was successful
+                - thumbnails: List of base64-encoded thumbnail images
+                - error: Error message if unsuccessful
+        """
+        params = {
+            "thumb_width": thumb_width,
+            "track_changes": track_changes,
+        }
+        if page_range:
+            params["page_range"] = page_range
+
+        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/thumbnails/{lookup_key}?{query_string}",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "thumbnails": response.get("thumbnails"),
+            "error": response.get("error"),
+        }
+
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        Check the health of the API
+
+        Returns:
+            Dictionary with status information
+        """
+        response = await self._make_request("GET", "/api/v1/health")
+        return response
+
+    async def user_health_check(self) -> Dict[str, Any]:
+        """
+        Check the health of the API with authentication
+
+        Returns:
+            Dictionary with status information
+        """
+        response = await self._make_request("GET", "/api/v1/user_health")
+        return response
+
+    async def generate_extraction_schemas(
+        self,
+        checkpoint_id: str,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Dict[str, Any]:
+        """
+        Generate extraction schemas for a checkpointed document
+
+        Args:
+            checkpoint_id: ID of the checkpoint from a previous marker request
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+
+        Returns:
+            Dictionary containing:
+                - success: Whether the generation was successful
+                - suggestions: Dictionary with simple_schema, moderate_schema, complex_schema
+                - status: Status of the request
+                - page_count: Number of pages processed
+                - error: Error message if unsuccessful
+        """
+        initial_data = await self._make_request(
+            "POST",
+            "/api/v1/marker/extraction/gen_schemas",
+            json={"checkpoint_id": checkpoint_id},
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        return {
+            "success": result_data.get("success"),
+            "suggestions": result_data.get("suggestions"),
+            "status": result_data.get("status"),
+            "page_count": result_data.get("page_count"),
+            "error": result_data.get("error"),
+        }
+
+    async def delete_workflow(
+        self,
+        workflow_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Delete a workflow definition
+
+        Args:
+            workflow_id: ID of the workflow to delete
+
+        Returns:
+            Dictionary with success status and message
+        """
+        response = await self._make_request(
+            "DELETE",
+            f"/api/v1/workflows/workflows/{workflow_id}",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "message": response.get("message", "Workflow deleted"),
+        }
+
 
 class DatalabClient:
     """Synchronous wrapper around AsyncDatalabClient"""
@@ -966,4 +1201,77 @@ class DatalabClient:
         """
         return self._run_async(
             self._async_client.list_files(limit=limit, offset=offset)
+        )
+
+    def get_file_metadata(
+        self,
+        file_id: int,
+    ) -> UploadedFileMetadata:
+        """Get file metadata (sync version)"""
+        return self._run_async(self._async_client.get_file_metadata(file_id=file_id))
+
+    def get_file_download_url(
+        self,
+        file_id: int,
+        expires_in: int = 3600,
+    ) -> Dict[str, Any]:
+        """Get file download URL (sync version)"""
+        return self._run_async(
+            self._async_client.get_file_download_url(file_id=file_id, expires_in=expires_in)
+        )
+
+    def delete_file(
+        self,
+        file_id: int,
+    ) -> Dict[str, Any]:
+        """Delete a file (sync version)"""
+        return self._run_async(self._async_client.delete_file(file_id=file_id))
+
+    def get_thumbnails(
+        self,
+        lookup_key: str,
+        page_range: Optional[str] = None,
+        thumb_width: int = 300,
+        track_changes: bool = False,
+    ) -> Dict[str, Any]:
+        """Get thumbnails (sync version)"""
+        return self._run_async(
+            self._async_client.get_thumbnails(
+                lookup_key=lookup_key,
+                page_range=page_range,
+                thumb_width=thumb_width,
+                track_changes=track_changes,
+            )
+        )
+
+    def health_check(self) -> Dict[str, Any]:
+        """Health check (sync version)"""
+        return self._run_async(self._async_client.health_check())
+
+    def user_health_check(self) -> Dict[str, Any]:
+        """User health check (sync version)"""
+        return self._run_async(self._async_client.user_health_check())
+
+    def generate_extraction_schemas(
+        self,
+        checkpoint_id: str,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Dict[str, Any]:
+        """Generate extraction schemas (sync version)"""
+        return self._run_async(
+            self._async_client.generate_extraction_schemas(
+                checkpoint_id=checkpoint_id,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def delete_workflow(
+        self,
+        workflow_id: int,
+    ) -> Dict[str, Any]:
+        """Delete a workflow (sync version)"""
+        return self._run_async(
+            self._async_client.delete_workflow(workflow_id=workflow_id)
         )
