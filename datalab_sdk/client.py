@@ -136,7 +136,8 @@ class AsyncDatalabClient:
             if data.get("status") == "complete":
                 return data
 
-            if not data.get("success", True) and not data.get("status") == "processing":
+            # Handle error status explicitly
+            if data.get("status") == "error" or (not data.get("success", True) and data.get("status") != "processing"):
                 raise DatalabAPIError(
                     f"Processing failed: {data.get('error', 'Unknown error')}"
                 )
