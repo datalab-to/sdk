@@ -110,12 +110,22 @@ class AsyncDatalabClient:
             try:
                 error_data = await response.json()
                 error_message = error_data.get("error", str(e))
+                # Extract error details (similar to MarkerAPIError.details in frontend)
+                error_details = error_data.get("error") if isinstance(error_data.get("error"), (str, dict)) else error_data.get("details")
             except Exception:
-                error_message = str(e)
+                try:
+                    # Try to get error text if JSON parsing fails
+                    error_text = await response.text()
+                    error_message = str(e)
+                    error_details = error_text if error_text else None
+                except Exception:
+                    error_message = str(e)
+                    error_details = None
             raise DatalabAPIError(
                 error_message,
                 e.status,
                 error_data if "error_data" in locals() else None,
+                error_details if "error_details" in locals() else None,
             )
         except aiohttp.ClientError as e:
             raise DatalabAPIError(f"Request failed: {str(e)}")
@@ -137,8 +147,12 @@ class AsyncDatalabClient:
                 return data
 
             if not data.get("success", True) and not data.get("status") == "processing":
+                error_msg = data.get('error', 'Unknown error')
+                # Extract error details from the response (similar to MarkerAPIError.details in frontend)
+                error_details = data.get('error') if isinstance(data.get('error'), (str, dict)) else data.get('details')
                 raise DatalabAPIError(
-                    f"Processing failed: {data.get('error', 'Unknown error')}"
+                    f"Processing failed: {error_msg}",
+                    details=error_details,
                 )
 
             await asyncio.sleep(poll_interval)
@@ -238,8 +252,12 @@ class AsyncDatalabClient:
         )
 
         if not initial_data.get("success"):
+            error_msg = initial_data.get('error', 'Unknown error')
+            # Extract error details from the response (similar to MarkerAPIError.details in frontend)
+            error_details = initial_data.get('error') if isinstance(initial_data.get('error'), (str, dict)) else initial_data.get('details')
             raise DatalabAPIError(
-                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+                f"Request failed: {error_msg}",
+                details=error_details,
             )
 
         result_data = await self._poll_result(
@@ -290,8 +308,12 @@ class AsyncDatalabClient:
         )
 
         if not initial_data.get("success"):
+            error_msg = initial_data.get('error', 'Unknown error')
+            # Extract error details from the response (similar to MarkerAPIError.details in frontend)
+            error_details = initial_data.get('error') if isinstance(initial_data.get('error'), (str, dict)) else initial_data.get('details')
             raise DatalabAPIError(
-                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+                f"Request failed: {error_msg}",
+                details=error_details,
             )
 
         result_data = await self._poll_result(
