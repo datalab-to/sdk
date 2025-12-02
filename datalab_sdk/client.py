@@ -256,11 +256,17 @@ class AsyncDatalabClient:
             json=result_data.get("json"),
             chunks=result_data.get("chunks"),
             extraction_schema_json=result_data.get("extraction_schema_json"),
+            segmentation_results=result_data.get("segmentation_results"),
             images=result_data.get("images"),
             metadata=result_data.get("metadata"),
             error=result_data.get("error"),
             page_count=result_data.get("page_count"),
             status=result_data.get("status", "complete"),
+            checkpoint_id=result_data.get("checkpoint_id"),
+            versions=result_data.get("versions"),
+            parse_quality_score=result_data.get("parse_quality_score"),
+            runtime=result_data.get("runtime"),
+            cost_breakdown=result_data.get("cost_breakdown"),
         )
 
         # Save output if requested
@@ -306,6 +312,8 @@ class AsyncDatalabClient:
             error=result_data.get("error"),
             page_count=result_data.get("page_count"),
             status=result_data.get("status", "complete"),
+            versions=result_data.get("versions"),
+            cost_breakdown=result_data.get("cost_breakdown"),
         )
 
         # Save output if requested
@@ -452,6 +460,31 @@ class AsyncDatalabClient:
             )
 
         return workflows
+
+    async def delete_workflow(self, workflow_id: int) -> Dict[str, Any]:
+        """
+        Delete a workflow definition
+
+        Args:
+            workflow_id: ID of the workflow to delete
+
+        Returns:
+            Dictionary containing:
+                - success: Whether the deletion was successful
+                - message: Confirmation message
+
+        Raises:
+            DatalabAPIError: If workflow has executions or cannot be deleted
+        """
+        response = await self._make_request(
+            "DELETE",
+            f"/api/v1/workflows/workflows/{workflow_id}",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "message": response.get("message", f"Workflow {workflow_id} deleted successfully"),
+        }
 
     async def execute_workflow(
         self,
@@ -784,6 +817,95 @@ class AsyncDatalabClient:
             "offset": response.get("offset", offset),
         }
 
+    async def get_file_metadata(
+        self,
+        file_id: Union[int, str],
+    ) -> UploadedFileMetadata:
+        """
+        Get metadata for an uploaded file
+
+        Args:
+            file_id: File ID (integer or hashid string)
+
+        Returns:
+            UploadedFileMetadata object with file information
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/files/{file_id}",
+        )
+
+        return UploadedFileMetadata(
+            file_id=response["file_id"],
+            original_filename=response["original_filename"],
+            content_type=response["content_type"],
+            reference=response["reference"],
+            upload_status=response["upload_status"],
+            file_size=response.get("file_size"),
+            created=response.get("created"),
+        )
+
+    async def get_file_download_url(
+        self,
+        file_id: Union[int, str],
+        expires_in: int = 3600,
+    ) -> Dict[str, Any]:
+        """
+        Generate presigned URL for downloading a file
+
+        Args:
+            file_id: File ID (integer or hashid string)
+            expires_in: URL expiry time in seconds (default: 3600, max: 86400)
+
+        Returns:
+            Dictionary containing:
+                - download_url: Presigned URL for downloading the file
+                - expires_in: URL expiry time in seconds
+                - file_id: File ID
+                - original_filename: Original filename
+        """
+        if expires_in < 60 or expires_in > 86400:
+            raise ValueError("expires_in must be between 60 and 86400 seconds")
+
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/files/{file_id}/download?expires_in={expires_in}",
+        )
+
+        return {
+            "download_url": response["download_url"],
+            "expires_in": response["expires_in"],
+            "file_id": response["file_id"],
+            "original_filename": response["original_filename"],
+        }
+
+    async def delete_file(
+        self,
+        file_id: Union[int, str],
+    ) -> Dict[str, Any]:
+        """
+        Delete an uploaded file
+
+        Removes the file from both storage and the database.
+
+        Args:
+            file_id: File ID (integer or hashid string)
+
+        Returns:
+            Dictionary containing:
+                - success: Whether the deletion was successful
+                - message: Confirmation message
+        """
+        response = await self._make_request(
+            "DELETE",
+            f"/api/v1/files/{file_id}",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "message": response.get("message", f"File {file_id} deleted successfully"),
+        }
+
 
 class DatalabClient:
     """Synchronous wrapper around AsyncDatalabClient"""
@@ -966,4 +1088,84 @@ class DatalabClient:
         """
         return self._run_async(
             self._async_client.list_files(limit=limit, offset=offset)
+        )
+
+    def get_file_metadata(
+        self,
+        file_id: Union[int, str],
+    ) -> UploadedFileMetadata:
+        """
+        Get metadata for an uploaded file (sync version)
+
+        Args:
+            file_id: File ID (integer or hashid string)
+
+        Returns:
+            UploadedFileMetadata object with file information
+        """
+        return self._run_async(
+            self._async_client.get_file_metadata(file_id=file_id)
+        )
+
+    def get_file_download_url(
+        self,
+        file_id: Union[int, str],
+        expires_in: int = 3600,
+    ) -> Dict[str, Any]:
+        """
+        Generate presigned URL for downloading a file (sync version)
+
+        Args:
+            file_id: File ID (integer or hashid string)
+            expires_in: URL expiry time in seconds (default: 3600, max: 86400)
+
+        Returns:
+            Dictionary containing:
+                - download_url: Presigned URL for downloading the file
+                - expires_in: URL expiry time in seconds
+                - file_id: File ID
+                - original_filename: Original filename
+        """
+        return self._run_async(
+            self._async_client.get_file_download_url(file_id=file_id, expires_in=expires_in)
+        )
+
+    def delete_file(
+        self,
+        file_id: Union[int, str],
+    ) -> Dict[str, Any]:
+        """
+        Delete an uploaded file (sync version)
+
+        Removes the file from both storage and the database.
+
+        Args:
+            file_id: File ID (integer or hashid string)
+
+        Returns:
+            Dictionary containing:
+                - success: Whether the deletion was successful
+                - message: Confirmation message
+        """
+        return self._run_async(
+            self._async_client.delete_file(file_id=file_id)
+        )
+
+    def delete_workflow(self, workflow_id: int) -> Dict[str, Any]:
+        """
+        Delete a workflow definition (sync version)
+
+        Args:
+            workflow_id: ID of the workflow to delete
+
+        Returns:
+            Dictionary containing:
+                - success: Whether the deletion was successful
+                - message: Confirmation message
+
+        Raises:
+            DatalabAPIError: If workflow has executions or cannot be deleted
+        """
+        return self._run_async(
+            self._async_client.delete_workflow(workflow_id=workflow_id)
         )
