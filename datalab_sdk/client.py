@@ -109,13 +109,21 @@ class AsyncDatalabClient:
         except aiohttp.ClientResponseError as e:
             try:
                 error_data = await response.json()
-                error_message = error_data.get("error", str(e))
+                # Extract error message from details (API response) or fall back to error field
+                details = error_data.get("details")
+                if details and isinstance(details, str):
+                    error_message = details
+                else:
+                    error_message = error_data.get("error", str(e))
             except Exception:
                 error_message = str(e)
+                error_data = None
+                details = None
             raise DatalabAPIError(
                 error_message,
                 e.status,
                 error_data if "error_data" in locals() else None,
+                details=details if "details" in locals() else None,
             )
         except aiohttp.ClientError as e:
             raise DatalabAPIError(f"Request failed: {str(e)}")
@@ -137,8 +145,15 @@ class AsyncDatalabClient:
                 return data
 
             if not data.get("success", True) and not data.get("status") == "processing":
+                # Extract error message from details (API response) or fall back to error field
+                details = data.get("details")
+                if details and isinstance(details, str):
+                    error_message = details
+                else:
+                    error_message = data.get("error", "Unknown error")
                 raise DatalabAPIError(
-                    f"Processing failed: {data.get('error', 'Unknown error')}"
+                    f"Processing failed: {error_message}",
+                    details=details,
                 )
 
             await asyncio.sleep(poll_interval)
@@ -238,8 +253,15 @@ class AsyncDatalabClient:
         )
 
         if not initial_data.get("success"):
+            # Extract error message from details (API response) or fall back to error field
+            details = initial_data.get("details")
+            if details and isinstance(details, str):
+                error_message = details
+            else:
+                error_message = initial_data.get("error", "Unknown error")
             raise DatalabAPIError(
-                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+                f"Request failed: {error_message}",
+                details=details,
             )
 
         result_data = await self._poll_result(
@@ -290,8 +312,15 @@ class AsyncDatalabClient:
         )
 
         if not initial_data.get("success"):
+            # Extract error message from details (API response) or fall back to error field
+            details = initial_data.get("details")
+            if details and isinstance(details, str):
+                error_message = details
+            else:
+                error_message = initial_data.get("error", "Unknown error")
             raise DatalabAPIError(
-                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+                f"Request failed: {error_message}",
+                details=details,
             )
 
         result_data = await self._poll_result(
