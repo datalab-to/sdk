@@ -3,6 +3,7 @@ Datalab API client - async core with sync wrapper
 """
 
 import asyncio
+import json
 import mimetypes
 import aiohttp
 from tenacity import (
@@ -107,15 +108,33 @@ class AsyncDatalabClient:
         except asyncio.TimeoutError:
             raise DatalabTimeoutError(f"Request timed out after {self.timeout} seconds")
         except aiohttp.ClientResponseError as e:
+            error_data = None
+            error_details = None
             try:
-                error_data = await response.json()
-                error_message = error_data.get("error", str(e))
+                # Get raw error text (similar to frontend's MarkerAPIError.details)
+                error_text = await response.text()
+                error_details = error_text
+                
+                # Try to parse as JSON to extract structured error data
+                try:
+                    error_data = json.loads(error_text)
+                    error_message = error_data.get("error", error_data.get("detail", str(e)))
+                    # Use error field from JSON as details if available, otherwise use raw text
+                    if "error" in error_data:
+                        error_details = error_data.get("error")
+                    elif "detail" in error_data:
+                        error_details = error_data.get("detail")
+                except (json.JSONDecodeError, ValueError):
+                    # If JSON parsing fails, use raw text as message
+                    error_message = error_text if error_text else str(e)
             except Exception:
+                # If we can't read the response, fall back to status text
                 error_message = str(e)
             raise DatalabAPIError(
                 error_message,
                 e.status,
-                error_data if "error_data" in locals() else None,
+                error_data,
+                details=error_details,
             )
         except aiohttp.ClientError as e:
             raise DatalabAPIError(f"Request failed: {str(e)}")
@@ -137,8 +156,11 @@ class AsyncDatalabClient:
                 return data
 
             if not data.get("success", True) and not data.get("status") == "processing":
+                error_msg = data.get('error', 'Unknown error')
                 raise DatalabAPIError(
-                    f"Processing failed: {data.get('error', 'Unknown error')}"
+                    f"Processing failed: {error_msg}",
+                    details=error_msg if isinstance(error_msg, str) else None,
+                    response_data=data,
                 )
 
             await asyncio.sleep(poll_interval)
