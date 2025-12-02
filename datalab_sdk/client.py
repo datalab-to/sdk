@@ -180,6 +180,15 @@ class AsyncDatalabClient:
         if not file_path.exists():
             raise DatalabFileError(f"File not found: {file_path}")
 
+        # Read file content
+        file_data = file_path.read_bytes()
+        
+        # Validate that file is not empty
+        if not file_data:
+            raise DatalabFileError(
+                f"The uploaded file is empty. Please provide a file with content: {file_path}"
+            )
+
         # Determine MIME type
         mime_type, _ = mimetypes.guess_type(str(file_path))
         if not mime_type:
@@ -187,7 +196,7 @@ class AsyncDatalabClient:
             extension = file_path.suffix.lower()
             mime_type = MIMETYPE_MAP.get(extension, "application/octet-stream")
 
-        return file_path.name, file_path.read_bytes(), mime_type
+        return file_path.name, file_data, mime_type
 
     def get_form_params(self, file_path=None, file_url=None, options=None):
         form_data = aiohttp.FormData()
@@ -648,6 +657,13 @@ class AsyncDatalabClient:
 
         if not file_path.exists():
             raise DatalabFileError(f"File not found: {file_path}")
+
+        # Check if file is empty before making API calls
+        file_size = file_path.stat().st_size
+        if file_size == 0:
+            raise DatalabFileError(
+                f"The uploaded file is empty. Please provide a file with content: {file_path}"
+            )
 
         # Determine content type
         mime_type, _ = mimetypes.guess_type(str(file_path))
