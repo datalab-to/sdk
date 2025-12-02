@@ -211,7 +211,16 @@ class InputConfig:
 
 @dataclass
 class WorkflowExecution:
-    """Result from workflow execution"""
+    """Result from workflow execution
+
+    The `steps` field contains step results organized by step name and file ID.
+    For parse steps (e.g., marker_parse), step results may include:
+    - success: bool - Whether the step succeeded
+    - error: str - Error message if the step failed
+    - error_in: str - Stage where error occurred (e.g., "VALIDATION" for page range errors)
+    - total_pages: int - Total number of pages in the document
+    - Other step-specific fields depending on the step type
+    """
 
     id: int
     workflow_id: int

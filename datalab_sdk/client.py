@@ -542,11 +542,33 @@ class AsyncDatalabClient:
             # If any step failed, extract error from nested structure
             if status == "FAILED" or not success:
                 failed_steps = []
+                step_errors = []
                 for step_name, step_info in steps_data.items():
                     for file_key, file_step_data in step_info.items():
-                        if isinstance(file_step_data, dict) and file_step_data.get("status") == "FAILED":
-                            failed_steps.append(f"{step_name}[{file_key}]")
-                if failed_steps and not error:
+                        if isinstance(file_step_data, dict):
+                            # Check for both status="FAILED" and success=False
+                            step_failed = (
+                                file_step_data.get("status") == "FAILED"
+                                or file_step_data.get("success") is False
+                            )
+                            if step_failed:
+                                failed_steps.append(f"{step_name}[{file_key}]")
+                                # Extract error message from step result if available
+                                step_error = file_step_data.get("error")
+                                if step_error:
+                                    error_in = file_step_data.get("error_in")
+                                    if error_in:
+                                        step_errors.append(
+                                            f"{step_name}[{file_key}]: {step_error} (error_in: {error_in})"
+                                        )
+                                    else:
+                                        step_errors.append(
+                                            f"{step_name}[{file_key}]: {step_error}"
+                                        )
+                # Use detailed error messages if available, otherwise use step names
+                if step_errors and not error:
+                    error = "; ".join(step_errors)
+                elif failed_steps and not error:
                     error = f"Step(s) failed: {', '.join(failed_steps)}"
 
             execution = WorkflowExecution(
