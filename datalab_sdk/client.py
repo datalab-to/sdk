@@ -32,7 +32,10 @@ from datalab_sdk.models import (
     WorkflowExecution,
     InputConfig,
     UploadedFileMetadata,
+    ExtractionSchemaGenerationResult,
+    ThumbnailResult,
 )
+from typing import Optional
 from datalab_sdk.settings import settings
 
 
@@ -212,6 +215,19 @@ class AsyncDatalabClient:
                     form_data.add_field(key, str(value[1]))
                 else:
                     form_data.add_field(key, str(value))
+            
+            # Handle special fields for ConvertOptions
+            if isinstance(options, ConvertOptions):
+                if options.disable_ocr_math:
+                    form_data.add_field("disable_ocr_math", "true")
+                if options.save_checkpoint:
+                    form_data.add_field("save_checkpoint", "true")
+                if options.segmentation_schema:
+                    form_data.add_field("segmentation_schema", options.segmentation_schema)
+                if options.extras:
+                    form_data.add_field("extras", ",".join(options.extras))
+                if options.workflowstepdata_id is not None:
+                    form_data.add_field("workflowstepdata_id", str(options.workflowstepdata_id))
 
         return form_data
 
@@ -256,11 +272,16 @@ class AsyncDatalabClient:
             json=result_data.get("json"),
             chunks=result_data.get("chunks"),
             extraction_schema_json=result_data.get("extraction_schema_json"),
+            segmentation_results=result_data.get("segmentation_results"),
             images=result_data.get("images"),
             metadata=result_data.get("metadata"),
             error=result_data.get("error"),
             page_count=result_data.get("page_count"),
             status=result_data.get("status", "complete"),
+            parse_quality_score=result_data.get("parse_quality_score"),
+            checkpoint_id=result_data.get("checkpoint_id"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            runtime=result_data.get("runtime"),
         )
 
         # Save output if requested
@@ -495,6 +516,8 @@ class AsyncDatalabClient:
             error=response.get("error"),
             created=response.get("created"),
             updated=response.get("updated"),
+            execution_id=response.get("execution_id"),
+            external_workflow_id=response.get("external_workflow_id"),
         )
 
     async def get_execution_status(
@@ -559,6 +582,8 @@ class AsyncDatalabClient:
                 error=error,
                 created=response.get("created"),
                 updated=response.get("updated"),
+                execution_id=response.get("execution_id"),
+                external_workflow_id=response.get("external_workflow_id"),
             )
 
             # If complete or failed, return immediately
@@ -784,6 +809,186 @@ class AsyncDatalabClient:
             "offset": response.get("offset", offset),
         }
 
+    async def get_file_metadata(
+        self,
+        file_id: int,
+    ) -> UploadedFileMetadata:
+        """
+        Get metadata for an uploaded file.
+
+        Args:
+            file_id: File ID
+
+        Returns:
+            UploadedFileMetadata object with file information
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/files/{file_id}",
+        )
+
+        return UploadedFileMetadata(
+            file_id=response["file_id"],
+            original_filename=response["original_filename"],
+            content_type=response["content_type"],
+            reference=response["reference"],
+            upload_status=response["upload_status"],
+            file_size=response.get("file_size"),
+            created=response.get("created"),
+        )
+
+    async def get_file_download_url(
+        self,
+        file_id: int,
+        expires_in: int = 3600,
+    ) -> Dict[str, Any]:
+        """
+        Generate presigned URL for downloading a file.
+
+        Args:
+            file_id: File ID
+            expires_in: URL expiry time in seconds (default: 3600, max: 86400)
+
+        Returns:
+            Dictionary containing:
+                - download_url: Presigned URL for downloading
+                - expires_in: URL expiry time in seconds
+                - file_id: File ID
+                - original_filename: Original filename
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/files/{file_id}/download?expires_in={expires_in}",
+        )
+
+        return {
+            "download_url": response["download_url"],
+            "expires_in": response["expires_in"],
+            "file_id": response["file_id"],
+            "original_filename": response["original_filename"],
+        }
+
+    async def delete_file(
+        self,
+        file_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Delete an uploaded file.
+
+        Args:
+            file_id: File ID to delete
+
+        Returns:
+            Dictionary with success status and message
+        """
+        response = await self._make_request(
+            "DELETE",
+            f"/api/v1/files/{file_id}",
+        )
+
+        return response
+
+    async def delete_workflow(
+        self,
+        workflow_id: int,
+    ) -> Dict[str, Any]:
+        """
+        Delete a workflow definition.
+
+        Args:
+            workflow_id: ID of the workflow to delete
+
+        Returns:
+            Dictionary with success status and message
+        """
+        response = await self._make_request(
+            "DELETE",
+            f"/api/v1/workflows/workflows/{workflow_id}",
+        )
+
+        return response
+
+    async def get_thumbnails(
+        self,
+        lookup_key: str,
+        page_range: Optional[str] = None,
+        thumb_width: int = 300,
+        track_changes: bool = False,
+    ) -> ThumbnailResult:
+        """
+        Get thumbnails for a processed document.
+
+        Args:
+            lookup_key: Lookup key from a previous conversion/OCR request
+            page_range: Optional page range (e.g., "0,2-4")
+            thumb_width: Width of thumbnails in pixels (default: 300)
+            track_changes: Whether to track changes (default: False)
+
+        Returns:
+            ThumbnailResult object with base64 encoded thumbnail images
+        """
+        params = {
+            "thumb_width": thumb_width,
+            "track_changes": track_changes,
+        }
+        if page_range:
+            params["page_range"] = page_range
+
+        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/thumbnails/{lookup_key}?{query_string}",
+        )
+
+        return ThumbnailResult(
+            success=response.get("success", True),
+            error=response.get("error"),
+            thumbnails=response.get("thumbnails"),
+        )
+
+    async def generate_extraction_schemas(
+        self,
+        checkpoint_id: str,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ExtractionSchemaGenerationResult:
+        """
+        Generate extraction schemas for a checkpoint.
+
+        Args:
+            checkpoint_id: Checkpoint ID from a previous marker conversion
+            max_polls: Maximum number of polling attempts (default: 300)
+            poll_interval: Seconds between polling attempts (default: 1)
+
+        Returns:
+            ExtractionSchemaGenerationResult with suggested schemas
+        """
+        initial_data = await self._make_request(
+            "POST",
+            "/api/v1/marker/extraction/gen_schemas",
+            json={"checkpoint_id": checkpoint_id},
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        return ExtractionSchemaGenerationResult(
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            suggestions=result_data.get("suggestions"),
+            status=result_data.get("status", "complete"),
+            page_count=result_data.get("page_count"),
+            total_cost=result_data.get("total_cost"),
+        )
+
 
 class DatalabClient:
     """Synchronous wrapper around AsyncDatalabClient"""
@@ -966,4 +1171,62 @@ class DatalabClient:
         """
         return self._run_async(
             self._async_client.list_files(limit=limit, offset=offset)
+        )
+
+    def get_file_metadata(
+        self,
+        file_id: int,
+    ) -> UploadedFileMetadata:
+        """Get file metadata (sync version)"""
+        return self._run_async(self._async_client.get_file_metadata(file_id))
+
+    def get_file_download_url(
+        self,
+        file_id: int,
+        expires_in: int = 3600,
+    ) -> Dict[str, Any]:
+        """Get presigned download URL (sync version)"""
+        return self._run_async(
+            self._async_client.get_file_download_url(file_id, expires_in)
+        )
+
+    def delete_file(
+        self,
+        file_id: int,
+    ) -> Dict[str, Any]:
+        """Delete a file (sync version)"""
+        return self._run_async(self._async_client.delete_file(file_id))
+
+    def delete_workflow(
+        self,
+        workflow_id: int,
+    ) -> Dict[str, Any]:
+        """Delete a workflow (sync version)"""
+        return self._run_async(self._async_client.delete_workflow(workflow_id))
+
+    def get_thumbnails(
+        self,
+        lookup_key: str,
+        page_range: Optional[str] = None,
+        thumb_width: int = 300,
+        track_changes: bool = False,
+    ) -> ThumbnailResult:
+        """Get thumbnails (sync version)"""
+        return self._run_async(
+            self._async_client.get_thumbnails(
+                lookup_key, page_range, thumb_width, track_changes
+            )
+        )
+
+    def generate_extraction_schemas(
+        self,
+        checkpoint_id: str,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ExtractionSchemaGenerationResult:
+        """Generate extraction schemas (sync version)"""
+        return self._run_async(
+            self._async_client.generate_extraction_schemas(
+                checkpoint_id, max_polls, poll_interval
+            )
         )

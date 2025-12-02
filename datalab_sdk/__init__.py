@@ -17,6 +17,8 @@ from .models import (
     WorkflowExecution,
     InputConfig,
     UploadedFileMetadata,
+    ExtractionSchemaGenerationResult,
+    ThumbnailResult,
 )
 from .settings import settings
 
@@ -36,4 +38,6 @@ __all__ = [
     "WorkflowExecution",
     "InputConfig",
     "UploadedFileMetadata",
+    "ExtractionSchemaGenerationResult",
+    "ThumbnailResult",
 ]

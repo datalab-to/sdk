@@ -44,9 +44,14 @@ class ConvertOptions(ProcessingOptions):
     use_llm: bool = False
     strip_existing_ocr: bool = False
     disable_image_extraction: bool = False
+    disable_ocr_math: bool = False
     block_correction_prompt: Optional[str] = None
     additional_config: Optional[Dict[str, Any]] = None
     page_schema: Optional[Dict[str, Any]] = None
+    segmentation_schema: Optional[str] = None
+    save_checkpoint: bool = False
+    extras: Optional[List[str]] = None  # e.g., ["track_changes", "chart_understanding"]
+    workflowstepdata_id: Optional[int] = None
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "fast"  # fast, balanced, accurate
 
@@ -67,11 +72,16 @@ class ConversionResult:
     json: Optional[Dict[str, Any]] = None
     chunks: Optional[Dict[str, Any]] = None
     extraction_schema_json: Optional[str] = None
+    segmentation_results: Optional[Dict[str, Any]] = None
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     page_count: Optional[int] = None
     status: str = "complete"
+    parse_quality_score: Optional[float] = None
+    checkpoint_id: Optional[str] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
+    runtime: Optional[float] = None
 
     def save_output(
         self, output_path: Union[str, Path], save_images: bool = True
@@ -215,13 +225,15 @@ class WorkflowExecution:
 
     id: int
     workflow_id: int
-    status: str  # "IN_PROGRESS", "COMPLETED", "FAILED"
+    status: str  # "IN_PROGRESS", "COMPLETED", "FAILED", "QUEUED", "PENDING"
     input_config: Dict[str, Any]
     success: bool = True
     steps: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     created: Optional[str] = None
     updated: Optional[str] = None
+    execution_id: Optional[int] = None  # Alternative ID field from API
+    external_workflow_id: Optional[str] = None  # Temporal workflow ID
 
     def save_output(self, output_path: Union[str, Path]) -> None:
         """Save the execution steps to a JSON file"""
@@ -255,6 +267,27 @@ class UploadedFileMetadata:
     file_size: Optional[int] = None
     created: Optional[str] = None
     error: Optional[str] = None
+
+
+@dataclass
+class ExtractionSchemaGenerationResult:
+    """Result from extraction schema generation"""
+
+    success: Optional[bool] = None
+    error: Optional[str] = None
+    suggestions: Optional[Dict[str, Any]] = None
+    status: str = "processing"
+    page_count: Optional[int] = None
+    total_cost: Optional[int] = None
+
+
+@dataclass
+class ThumbnailResult:
+    """Result from thumbnail generation"""
+
+    success: bool
+    error: Optional[str] = None
+    thumbnails: Optional[List[str]] = None  # List of base64 encoded thumbnail images
 
 
 @dataclass
