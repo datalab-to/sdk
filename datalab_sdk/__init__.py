@@ -2,7 +2,7 @@
 Datalab SDK - Python client for Datalab API
 
 This SDK provides both synchronous and asynchronous interfaces to the Datalab API,
-supporting document conversion, OCR, layout analysis, and table recognition.
+supporting document conversion, OCR, and layout analysis.
 """
 
 from .client import DatalabClient, AsyncDatalabClient
