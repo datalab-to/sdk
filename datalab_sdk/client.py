@@ -109,7 +109,8 @@ class AsyncDatalabClient:
         except aiohttp.ClientResponseError as e:
             try:
                 error_data = await response.json()
-                error_message = error_data.get("error", str(e))
+                # FastAPI returns errors in "detail" field, but some APIs use "error"
+                error_message = error_data.get("detail") or error_data.get("error") or str(e)
             except Exception:
                 error_message = str(e)
             raise DatalabAPIError(
@@ -180,6 +181,15 @@ class AsyncDatalabClient:
         if not file_path.exists():
             raise DatalabFileError(f"File not found: {file_path}")
 
+        # Read file content
+        file_data = file_path.read_bytes()
+        
+        # Check if file is empty
+        if not file_data:
+            raise DatalabFileError(
+                f"File is empty: {file_path}. Please provide a file with content."
+            )
+
         # Determine MIME type
         mime_type, _ = mimetypes.guess_type(str(file_path))
         if not mime_type:
@@ -187,7 +197,7 @@ class AsyncDatalabClient:
             extension = file_path.suffix.lower()
             mime_type = MIMETYPE_MAP.get(extension, "application/octet-stream")
 
-        return file_path.name, file_path.read_bytes(), mime_type
+        return file_path.name, file_data, mime_type
 
     def get_form_params(self, file_path=None, file_url=None, options=None):
         form_data = aiohttp.FormData()
