@@ -49,6 +49,37 @@ class ConvertOptions(ProcessingOptions):
     page_schema: Optional[Dict[str, Any]] = None
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "fast"  # fast, balanced, accurate
+    keep_spreadsheet_formatting: bool = False
+    """Keep spreadsheet formatting (styles, colors) in output. Defaults to False for smaller responses."""
+
+    def to_form_data(self) -> Dict[str, Any]:
+        """Convert to form data format for API requests"""
+        form_data = {}
+        
+        # Build additional_config dict, merging keep_spreadsheet_formatting if set
+        additional_config_dict = {}
+        if self.additional_config:
+            additional_config_dict.update(self.additional_config)
+        if self.keep_spreadsheet_formatting:
+            additional_config_dict["keep_spreadsheet_formatting"] = True
+        
+        # Add non-None values, excluding keep_spreadsheet_formatting (handled via additional_config)
+        for key, value in self.__dict__.items():
+            if key == "keep_spreadsheet_formatting":
+                continue  # Handled via additional_config
+            if value is not None:
+                if isinstance(value, bool):
+                    form_data[key] = (None, value)
+                elif isinstance(value, (dict, list)):
+                    form_data[key] = (None, json.dumps(value, indent=2))
+                else:
+                    form_data[key] = (None, value)
+        
+        # Add additional_config if it has any values
+        if additional_config_dict:
+            form_data["additional_config"] = (None, json.dumps(additional_config_dict))
+        
+        return form_data
 
 
 @dataclass
