@@ -72,7 +72,9 @@ class ConversionResult:
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
-    page_count: Optional[int] = None
+    error_in: Optional[str] = None  # Where the error occurred (e.g., "VALIDATION")
+    page_count: Optional[int] = None  # Number of pages processed
+    total_pages: Optional[int] = None  # Total number of pages in the document
     status: str = "complete"
 
     def save_output(
