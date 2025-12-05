@@ -49,6 +49,7 @@ class ConvertOptions(ProcessingOptions):
     page_schema: Optional[Dict[str, Any]] = None
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "fast"  # fast, balanced, accurate
+    webhook_url: Optional[str] = None
     extras: Optional[str] = None  # comma-separated extras
 
 
