@@ -270,7 +270,9 @@ class AsyncDatalabClient:
             images=result_data.get("images"),
             metadata=result_data.get("metadata"),
             error=result_data.get("error"),
+            error_in=result_data.get("error_in"),
             page_count=result_data.get("page_count"),
+            total_pages=result_data.get("total_pages"),
             status=result_data.get("status", "complete"),
         )
 
