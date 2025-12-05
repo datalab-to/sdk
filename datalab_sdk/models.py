@@ -50,6 +50,7 @@ class ConvertOptions(ProcessingOptions):
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "fast"  # fast, balanced, accurate
     webhook_url: Optional[str] = None
+    extras: Optional[str] = None  # comma-separated extras
 
 
 @dataclass
