@@ -189,7 +189,7 @@ class AsyncDatalabClient:
 
         return file_path.name, file_path.read_bytes(), mime_type
 
-    def get_form_params(self, file_path=None, file_url=None, options=None):
+    def get_form_params(self, file_path=None, file_url=None, options=None, webhook_url=None):
         form_data = aiohttp.FormData()
 
         if file_url and file_path:
@@ -213,6 +213,10 @@ class AsyncDatalabClient:
                 else:
                     form_data.add_field(key, str(value))
 
+        # Add webhook_url if provided
+        if webhook_url:
+            form_data.add_field("webhook_url", webhook_url)
+
         return form_data
 
     # Convenient endpoint-specific methods
@@ -224,8 +228,22 @@ class AsyncDatalabClient:
         save_output: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        webhook_url: Optional[str] = None,
     ) -> ConversionResult:
-        """Convert a document using the marker endpoint"""
+        """
+        Convert a document using the marker endpoint
+        
+        Args:
+            file_path: Path to the file to convert
+            file_url: URL of the file to convert
+            options: Processing options for conversion
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+            webhook_url: Optional webhook URL to call when the request is complete.
+                        If provided, this will override the webhook URL stored in
+                        your account settings for this specific request.
+        """
         if options is None:
             options = ConvertOptions()
 
@@ -233,7 +251,7 @@ class AsyncDatalabClient:
             "POST",
             "/api/v1/marker",
             data=self.get_form_params(
-                file_path=file_path, file_url=file_url, options=options
+                file_path=file_path, file_url=file_url, options=options, webhook_url=webhook_url
             ),
         )
 
@@ -826,8 +844,22 @@ class DatalabClient:
         save_output: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        webhook_url: Optional[str] = None,
     ) -> ConversionResult:
-        """Convert a document using the marker endpoint (sync version)"""
+        """
+        Convert a document using the marker endpoint (sync version)
+        
+        Args:
+            file_path: Path to the file to convert
+            file_url: URL of the file to convert
+            options: Processing options for conversion
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+            webhook_url: Optional webhook URL to call when the request is complete.
+                        If provided, this will override the webhook URL stored in
+                        your account settings for this specific request.
+        """
         return self._run_async(
             self._async_client.convert(
                 file_path=file_path,
@@ -836,6 +868,7 @@ class DatalabClient:
                 save_output=save_output,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                webhook_url=webhook_url,
             )
         )
 
