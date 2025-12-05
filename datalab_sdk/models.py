@@ -49,6 +49,8 @@ class ConvertOptions(ProcessingOptions):
     page_schema: Optional[Dict[str, Any]] = None
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "fast"  # fast, balanced, accurate
+    webhook_url: Optional[str] = None
+    extras: Optional[str] = None  # comma-separated extras
 
 
 @dataclass
@@ -93,7 +95,9 @@ class ConversionResult:
                 json.dump(self.json, f, indent=2)
 
         if self.chunks:
-            with open(output_path.with_suffix(".chunks.json"), "w", encoding="utf-8") as f:
+            with open(
+                output_path.with_suffix(".chunks.json"), "w", encoding="utf-8"
+            ) as f:
                 json.dump(self.chunks, f, indent=2)
 
         if self.extraction_schema_json:
@@ -128,7 +132,7 @@ class WorkflowStep:
 
     unique_name: str
     settings: Dict[str, Any]
-    step_key: Optional[str] = ''
+    step_key: Optional[str] = ""
     depends_on: List[str] = field(default_factory=list)
     # Additional fields returned by API
     id: Optional[int] = None

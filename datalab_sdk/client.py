@@ -220,12 +220,23 @@ class AsyncDatalabClient:
         self,
         file_path: Optional[Union[str, Path]] = None,
         file_url: Optional[str] = None,
-        options: Optional[ProcessingOptions] = None,
+        options: Optional[ConvertOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
     ) -> ConversionResult:
-        """Convert a document using the marker endpoint"""
+        """
+        Convert a document using the marker endpoint
+
+        Args:
+            file_path: Path to the file to convert
+            file_url: URL of the file to convert
+            options: Processing options for conversion (use ConvertOptions.webhook_url
+                    to override the webhook URL stored in your account settings)
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
         if options is None:
             options = ConvertOptions()
 
@@ -349,7 +360,7 @@ class AsyncDatalabClient:
                 unique_name=step["unique_name"],
                 settings=step["settings"],
                 depends_on=step.get("depends_on", []),
-                id=step.get("id")
+                id=step.get("id"),
             )
             for step in response.get("steps", [])
         ]
@@ -544,7 +555,10 @@ class AsyncDatalabClient:
                 failed_steps = []
                 for step_name, step_info in steps_data.items():
                     for file_key, file_step_data in step_info.items():
-                        if isinstance(file_step_data, dict) and file_step_data.get("status") == "FAILED":
+                        if (
+                            isinstance(file_step_data, dict)
+                            and file_step_data.get("status") == "FAILED"
+                        ):
                             failed_steps.append(f"{step_name}[{file_key}]")
                 if failed_steps and not error:
                     error = f"Step(s) failed: {', '.join(failed_steps)}"
@@ -598,25 +612,27 @@ class AsyncDatalabClient:
                             async with aiohttp.ClientSession() as session:
                                 async with session.get(output_url) as resp:
                                     if resp.status == 200:
-                                        content_type = resp.headers.get('Content-Type', '')
-                                        if 'json' in content_type:
+                                        content_type = resp.headers.get(
+                                            "Content-Type", ""
+                                        )
+                                        if "json" in content_type:
                                             downloaded_data = await resp.json()
                                         else:
                                             downloaded_data = await resp.text()
                                         # Merge downloaded data with metadata
                                         results[step_name][file_key] = {
                                             **file_step_data,
-                                            "downloaded_data": downloaded_data
+                                            "downloaded_data": downloaded_data,
                                         }
                                     else:
                                         results[step_name][file_key] = {
                                             **file_step_data,
-                                            "error": f"Failed to download: HTTP {resp.status}"
+                                            "error": f"Failed to download: HTTP {resp.status}",
                                         }
                         except Exception as e:
                             results[step_name][file_key] = {
                                 **file_step_data,
-                                "error": f"Download failed: {str(e)}"
+                                "error": f"Download failed: {str(e)}",
                             }
                     else:
                         # Keep the step info if no URL available
@@ -822,12 +838,22 @@ class DatalabClient:
         self,
         file_path: Optional[Union[str, Path]] = None,
         file_url: Optional[str] = None,
-        options: Optional[ProcessingOptions] = None,
+        options: Optional[ConvertOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
     ) -> ConversionResult:
-        """Convert a document using the marker endpoint (sync version)"""
+        """
+        Convert a document using the marker endpoint (sync version)
+
+        Args:
+            file_path: Path to the file to convert
+            file_url: URL of the file to convert
+            options: Processing options for conversion
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
         return self._run_async(
             self._async_client.convert(
                 file_path=file_path,
