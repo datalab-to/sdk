@@ -109,7 +109,8 @@ class AsyncDatalabClient:
         except aiohttp.ClientResponseError as e:
             try:
                 error_data = await response.json()
-                error_message = error_data.get("error", str(e))
+                # FastAPI returns errors in "detail" field, but some APIs use "error"
+                error_message = error_data.get("detail") or error_data.get("error") or str(e)
             except Exception:
                 error_message = str(e)
             raise DatalabAPIError(
@@ -180,6 +181,15 @@ class AsyncDatalabClient:
         if not file_path.exists():
             raise DatalabFileError(f"File not found: {file_path}")
 
+        # Read file content
+        file_data = file_path.read_bytes()
+        
+        # Check if file is empty
+        if not file_data:
+            raise DatalabFileError(
+                f"File is empty: {file_path}. Please provide a file with content."
+            )
+
         # Determine MIME type
         mime_type, _ = mimetypes.guess_type(str(file_path))
         if not mime_type:
@@ -187,7 +197,7 @@ class AsyncDatalabClient:
             extension = file_path.suffix.lower()
             mime_type = MIMETYPE_MAP.get(extension, "application/octet-stream")
 
-        return file_path.name, file_path.read_bytes(), mime_type
+        return file_path.name, file_data, mime_type
 
     def get_form_params(self, file_path=None, file_url=None, options=None):
         form_data = aiohttp.FormData()
@@ -220,12 +230,23 @@ class AsyncDatalabClient:
         self,
         file_path: Optional[Union[str, Path]] = None,
         file_url: Optional[str] = None,
-        options: Optional[ProcessingOptions] = None,
+        options: Optional[ConvertOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
     ) -> ConversionResult:
-        """Convert a document using the marker endpoint"""
+        """
+        Convert a document using the marker endpoint
+
+        Args:
+            file_path: Path to the file to convert
+            file_url: URL of the file to convert
+            options: Processing options for conversion (use ConvertOptions.webhook_url
+                    to override the webhook URL stored in your account settings)
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
         if options is None:
             options = ConvertOptions()
 
@@ -256,11 +277,17 @@ class AsyncDatalabClient:
             json=result_data.get("json"),
             chunks=result_data.get("chunks"),
             extraction_schema_json=result_data.get("extraction_schema_json"),
+            segmentation_results=result_data.get("segmentation_results"),
             images=result_data.get("images"),
             metadata=result_data.get("metadata"),
             error=result_data.get("error"),
             page_count=result_data.get("page_count"),
             status=result_data.get("status", "complete"),
+            checkpoint_id=result_data.get("checkpoint_id"),
+            versions=result_data.get("versions"),
+            parse_quality_score=result_data.get("parse_quality_score"),
+            runtime=result_data.get("runtime"),
+            cost_breakdown=result_data.get("cost_breakdown"),
         )
 
         # Save output if requested
@@ -306,6 +333,8 @@ class AsyncDatalabClient:
             error=result_data.get("error"),
             page_count=result_data.get("page_count"),
             status=result_data.get("status", "complete"),
+            versions=result_data.get("versions"),
+            cost_breakdown=result_data.get("cost_breakdown"),
         )
 
         # Save output if requested
@@ -349,7 +378,7 @@ class AsyncDatalabClient:
                 unique_name=step["unique_name"],
                 settings=step["settings"],
                 depends_on=step.get("depends_on", []),
-                id=step.get("id")
+                id=step.get("id"),
             )
             for step in response.get("steps", [])
         ]
@@ -453,6 +482,31 @@ class AsyncDatalabClient:
 
         return workflows
 
+    async def delete_workflow(self, workflow_id: int) -> Dict[str, Any]:
+        """
+        Delete a workflow definition
+
+        Args:
+            workflow_id: ID of the workflow to delete
+
+        Returns:
+            Dictionary containing:
+                - success: Whether the deletion was successful
+                - message: Confirmation message
+
+        Raises:
+            DatalabAPIError: If workflow has executions or cannot be deleted
+        """
+        response = await self._make_request(
+            "DELETE",
+            f"/api/v1/workflows/workflows/{workflow_id}",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "message": response.get("message", f"Workflow {workflow_id} deleted successfully"),
+        }
+
     async def execute_workflow(
         self,
         workflow_id: int,
@@ -544,7 +598,10 @@ class AsyncDatalabClient:
                 failed_steps = []
                 for step_name, step_info in steps_data.items():
                     for file_key, file_step_data in step_info.items():
-                        if isinstance(file_step_data, dict) and file_step_data.get("status") == "FAILED":
+                        if (
+                            isinstance(file_step_data, dict)
+                            and file_step_data.get("status") == "FAILED"
+                        ):
                             failed_steps.append(f"{step_name}[{file_key}]")
                 if failed_steps and not error:
                     error = f"Step(s) failed: {', '.join(failed_steps)}"
@@ -598,25 +655,27 @@ class AsyncDatalabClient:
                             async with aiohttp.ClientSession() as session:
                                 async with session.get(output_url) as resp:
                                     if resp.status == 200:
-                                        content_type = resp.headers.get('Content-Type', '')
-                                        if 'json' in content_type:
+                                        content_type = resp.headers.get(
+                                            "Content-Type", ""
+                                        )
+                                        if "json" in content_type:
                                             downloaded_data = await resp.json()
                                         else:
                                             downloaded_data = await resp.text()
                                         # Merge downloaded data with metadata
                                         results[step_name][file_key] = {
                                             **file_step_data,
-                                            "downloaded_data": downloaded_data
+                                            "downloaded_data": downloaded_data,
                                         }
                                     else:
                                         results[step_name][file_key] = {
                                             **file_step_data,
-                                            "error": f"Failed to download: HTTP {resp.status}"
+                                            "error": f"Failed to download: HTTP {resp.status}",
                                         }
                         except Exception as e:
                             results[step_name][file_key] = {
                                 **file_step_data,
-                                "error": f"Download failed: {str(e)}"
+                                "error": f"Download failed: {str(e)}",
                             }
                     else:
                         # Keep the step info if no URL available
@@ -784,6 +843,95 @@ class AsyncDatalabClient:
             "offset": response.get("offset", offset),
         }
 
+    async def get_file_metadata(
+        self,
+        file_id: Union[int, str],
+    ) -> UploadedFileMetadata:
+        """
+        Get metadata for an uploaded file
+
+        Args:
+            file_id: File ID (integer or hashid string)
+
+        Returns:
+            UploadedFileMetadata object with file information
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/files/{file_id}",
+        )
+
+        return UploadedFileMetadata(
+            file_id=response["file_id"],
+            original_filename=response["original_filename"],
+            content_type=response["content_type"],
+            reference=response["reference"],
+            upload_status=response["upload_status"],
+            file_size=response.get("file_size"),
+            created=response.get("created"),
+        )
+
+    async def get_file_download_url(
+        self,
+        file_id: Union[int, str],
+        expires_in: int = 3600,
+    ) -> Dict[str, Any]:
+        """
+        Generate presigned URL for downloading a file
+
+        Args:
+            file_id: File ID (integer or hashid string)
+            expires_in: URL expiry time in seconds (default: 3600, max: 86400)
+
+        Returns:
+            Dictionary containing:
+                - download_url: Presigned URL for downloading the file
+                - expires_in: URL expiry time in seconds
+                - file_id: File ID
+                - original_filename: Original filename
+        """
+        if expires_in < 60 or expires_in > 86400:
+            raise ValueError("expires_in must be between 60 and 86400 seconds")
+
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/files/{file_id}/download?expires_in={expires_in}",
+        )
+
+        return {
+            "download_url": response["download_url"],
+            "expires_in": response["expires_in"],
+            "file_id": response["file_id"],
+            "original_filename": response["original_filename"],
+        }
+
+    async def delete_file(
+        self,
+        file_id: Union[int, str],
+    ) -> Dict[str, Any]:
+        """
+        Delete an uploaded file
+
+        Removes the file from both storage and the database.
+
+        Args:
+            file_id: File ID (integer or hashid string)
+
+        Returns:
+            Dictionary containing:
+                - success: Whether the deletion was successful
+                - message: Confirmation message
+        """
+        response = await self._make_request(
+            "DELETE",
+            f"/api/v1/files/{file_id}",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "message": response.get("message", f"File {file_id} deleted successfully"),
+        }
+
 
 class DatalabClient:
     """Synchronous wrapper around AsyncDatalabClient"""
@@ -822,12 +970,22 @@ class DatalabClient:
         self,
         file_path: Optional[Union[str, Path]] = None,
         file_url: Optional[str] = None,
-        options: Optional[ProcessingOptions] = None,
+        options: Optional[ConvertOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
     ) -> ConversionResult:
-        """Convert a document using the marker endpoint (sync version)"""
+        """
+        Convert a document using the marker endpoint (sync version)
+
+        Args:
+            file_path: Path to the file to convert
+            file_url: URL of the file to convert
+            options: Processing options for conversion
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
         return self._run_async(
             self._async_client.convert(
                 file_path=file_path,
@@ -966,4 +1124,84 @@ class DatalabClient:
         """
         return self._run_async(
             self._async_client.list_files(limit=limit, offset=offset)
+        )
+
+    def get_file_metadata(
+        self,
+        file_id: Union[int, str],
+    ) -> UploadedFileMetadata:
+        """
+        Get metadata for an uploaded file (sync version)
+
+        Args:
+            file_id: File ID (integer or hashid string)
+
+        Returns:
+            UploadedFileMetadata object with file information
+        """
+        return self._run_async(
+            self._async_client.get_file_metadata(file_id=file_id)
+        )
+
+    def get_file_download_url(
+        self,
+        file_id: Union[int, str],
+        expires_in: int = 3600,
+    ) -> Dict[str, Any]:
+        """
+        Generate presigned URL for downloading a file (sync version)
+
+        Args:
+            file_id: File ID (integer or hashid string)
+            expires_in: URL expiry time in seconds (default: 3600, max: 86400)
+
+        Returns:
+            Dictionary containing:
+                - download_url: Presigned URL for downloading the file
+                - expires_in: URL expiry time in seconds
+                - file_id: File ID
+                - original_filename: Original filename
+        """
+        return self._run_async(
+            self._async_client.get_file_download_url(file_id=file_id, expires_in=expires_in)
+        )
+
+    def delete_file(
+        self,
+        file_id: Union[int, str],
+    ) -> Dict[str, Any]:
+        """
+        Delete an uploaded file (sync version)
+
+        Removes the file from both storage and the database.
+
+        Args:
+            file_id: File ID (integer or hashid string)
+
+        Returns:
+            Dictionary containing:
+                - success: Whether the deletion was successful
+                - message: Confirmation message
+        """
+        return self._run_async(
+            self._async_client.delete_file(file_id=file_id)
+        )
+
+    def delete_workflow(self, workflow_id: int) -> Dict[str, Any]:
+        """
+        Delete a workflow definition (sync version)
+
+        Args:
+            workflow_id: ID of the workflow to delete
+
+        Returns:
+            Dictionary containing:
+                - success: Whether the deletion was successful
+                - message: Confirmation message
+
+        Raises:
+            DatalabAPIError: If workflow has executions or cannot be deleted
+        """
+        return self._run_async(
+            self._async_client.delete_workflow(workflow_id=workflow_id)
         )

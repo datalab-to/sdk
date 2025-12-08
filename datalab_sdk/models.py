@@ -44,13 +44,18 @@ class ConvertOptions(ProcessingOptions):
     use_llm: bool = False
     strip_existing_ocr: bool = False
     disable_image_extraction: bool = False
+    disable_ocr_math: bool = False
     block_correction_prompt: Optional[str] = None
     additional_config: Optional[Dict[str, Any]] = None
     page_schema: Optional[Dict[str, Any]] = None
+    segmentation_schema: Optional[str] = None  # JSON string for document segmentation
+    save_checkpoint: bool = False
+    extras: Optional[str] = None  # Comma-separated list: 'track_changes', 'chart_understanding'
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "fast"  # fast, balanced, accurate
     keep_spreadsheet_formatting: bool = False
-    """Keep spreadsheet formatting (styles, colors) in output. Defaults to False for smaller responses."""
+    webhook_url: Optional[str] = None
+    extras: Optional[str] = None  # comma-separated extras
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -88,11 +93,17 @@ class ConversionResult:
     json: Optional[Dict[str, Any]] = None
     chunks: Optional[Dict[str, Any]] = None
     extraction_schema_json: Optional[str] = None
+    segmentation_results: Optional[Dict[str, Any]] = None
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     page_count: Optional[int] = None
     status: str = "complete"
+    checkpoint_id: Optional[str] = None
+    versions: Optional[Union[Dict[str, Any], str]] = None
+    parse_quality_score: Optional[float] = None
+    runtime: Optional[float] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
 
     def save_output(
         self, output_path: Union[str, Path], save_images: bool = True
@@ -114,7 +125,9 @@ class ConversionResult:
                 json.dump(self.json, f, indent=2)
 
         if self.chunks:
-            with open(output_path.with_suffix(".chunks.json"), "w", encoding="utf-8") as f:
+            with open(
+                output_path.with_suffix(".chunks.json"), "w", encoding="utf-8"
+            ) as f:
                 json.dump(self.chunks, f, indent=2)
 
         if self.extraction_schema_json:
@@ -149,7 +162,7 @@ class WorkflowStep:
 
     unique_name: str
     settings: Dict[str, Any]
-    step_key: Optional[str] = ''
+    step_key: Optional[str] = ""
     depends_on: List[str] = field(default_factory=list)
     # Additional fields returned by API
     id: Optional[int] = None
@@ -287,6 +300,8 @@ class OCRResult:
     error: Optional[str] = None
     page_count: Optional[int] = None
     status: str = "complete"
+    versions: Optional[Union[Dict[str, Any], str]] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
 
     def get_text(self, page_num: Optional[int] = None) -> str:
         """Extract text from OCR results"""
