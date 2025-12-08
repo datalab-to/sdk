@@ -53,8 +53,28 @@ class ConvertOptions(ProcessingOptions):
     extras: Optional[str] = None  # Comma-separated list: 'track_changes', 'chart_understanding'
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "fast"  # fast, balanced, accurate
+    keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
     extras: Optional[str] = None  # comma-separated extras
+
+    def to_form_data(self) -> Dict[str, Any]:
+        """Convert to form data format for API requests"""
+        # Start with parent's form data
+        form_data = super().to_form_data()
+        
+        # Remove keep_spreadsheet_formatting from top-level (it goes in additional_config)
+        form_data.pop("keep_spreadsheet_formatting", None)
+        
+        additional_config_dict = {}
+        if self.additional_config:
+            additional_config_dict.update(self.additional_config)
+        if self.keep_spreadsheet_formatting:
+            additional_config_dict["keep_spreadsheet_formatting"] = True
+        
+        if additional_config_dict:
+            form_data["additional_config"] = (None, json.dumps(additional_config_dict))
+        
+        return form_data
 
 
 @dataclass
