@@ -44,9 +44,13 @@ class ConvertOptions(ProcessingOptions):
     use_llm: bool = False
     strip_existing_ocr: bool = False
     disable_image_extraction: bool = False
+    disable_ocr_math: bool = False
     block_correction_prompt: Optional[str] = None
     additional_config: Optional[Dict[str, Any]] = None
     page_schema: Optional[Dict[str, Any]] = None
+    segmentation_schema: Optional[str] = None  # JSON string for document segmentation
+    save_checkpoint: bool = False
+    extras: Optional[str] = None  # Comma-separated list: 'track_changes', 'chart_understanding'
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "fast"  # fast, balanced, accurate
     webhook_url: Optional[str] = None
@@ -69,11 +73,17 @@ class ConversionResult:
     json: Optional[Dict[str, Any]] = None
     chunks: Optional[Dict[str, Any]] = None
     extraction_schema_json: Optional[str] = None
+    segmentation_results: Optional[Dict[str, Any]] = None
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     page_count: Optional[int] = None
     status: str = "complete"
+    checkpoint_id: Optional[str] = None
+    versions: Optional[Union[Dict[str, Any], str]] = None
+    parse_quality_score: Optional[float] = None
+    runtime: Optional[float] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
 
     def save_output(
         self, output_path: Union[str, Path], save_images: bool = True
@@ -270,6 +280,8 @@ class OCRResult:
     error: Optional[str] = None
     page_count: Optional[int] = None
     status: str = "complete"
+    versions: Optional[Union[Dict[str, Any], str]] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
 
     def get_text(self, page_num: Optional[int] = None) -> str:
         """Extract text from OCR results"""
