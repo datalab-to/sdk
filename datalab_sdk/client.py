@@ -231,8 +231,7 @@ class AsyncDatalabClient:
         Args:
             file_path: Path to the file to convert
             file_url: URL of the file to convert
-            options: Processing options for conversion (use ConvertOptions.webhook_url
-                    to override the webhook URL stored in your account settings)
+            options: Processing options for conversion
             save_output: Optional path to save output files
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
