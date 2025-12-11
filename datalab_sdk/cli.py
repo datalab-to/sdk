@@ -93,6 +93,9 @@ def marker_options(func):
     func = click.option(
         "--page_schema", help="Schema to set to do structured extraction"
     )(func)
+    func = click.option(
+        "--add_block_ids", is_flag=True, help="Add block IDs to HTML output"
+    )(func)
     return func
 
 
@@ -139,13 +142,19 @@ async def process_files_async(
                 ) as client:
                     if method == "convert":
                         result = await client.convert(
-                            file_path, options=options, save_output=output_path,
-                            max_polls=max_polls, poll_interval=poll_interval
+                            file_path,
+                            options=options,
+                            save_output=output_path,
+                            max_polls=max_polls,
+                            poll_interval=poll_interval,
                         )
                     else:  # method == 'ocr'
                         result = await client.ocr(
-                            file_path, options=options, save_output=output_path,
-                            max_polls=max_polls, poll_interval=poll_interval
+                            file_path,
+                            options=options,
+                            save_output=output_path,
+                            max_polls=max_polls,
+                            poll_interval=poll_interval,
                         )
 
                 return {
@@ -247,6 +256,7 @@ def process_documents(
     disable_image_extraction: bool = False,
     block_correction_prompt: Optional[str] = None,
     page_schema: Optional[str] = None,
+    add_block_ids: bool = False,
 ):
     """Unified document processing function"""
     try:
@@ -290,6 +300,7 @@ def process_documents(
                 block_correction_prompt=block_correction_prompt,
                 skip_cache=skip_cache,
                 page_schema=page_schema,
+                add_block_ids=add_block_ids,
             )
         else:  # method == "ocr"
             options = OCROptions(
@@ -352,6 +363,7 @@ def convert(
     disable_image_extraction: bool,
     block_correction_prompt: Optional[str],
     page_schema: Optional[str],
+    add_block_ids: bool,
 ):
     """Convert documents to markdown, HTML, or JSON"""
     process_documents(
@@ -376,6 +388,7 @@ def convert(
         disable_image_extraction=disable_image_extraction,
         block_correction_prompt=block_correction_prompt,
         page_schema=page_schema,
+        add_block_ids=add_block_ids,
     )
 
 
@@ -465,7 +478,7 @@ def create_workflow(
             name=name, team_id=team_id, steps=workflow_steps
         )
 
-        click.echo(f"Workflow created successfully!")
+        click.echo("Workflow created successfully!")
         click.echo(f"   ID: {workflow.id}")
         click.echo(f"   Name: {workflow.name}")
         click.echo(f"   Team ID: {workflow.team_id}")
@@ -497,7 +510,7 @@ def get_workflow(workflow_id: int, api_key: Optional[str], base_url: str):
         client = DatalabClient(api_key=api_key, base_url=base_url)
         workflow = client.get_workflow(workflow_id)
 
-        click.echo(f"Workflow Details:")
+        click.echo("Workflow Details:")
         click.echo(f"   ID: {workflow.id}")
         click.echo(f"   Name: {workflow.name}")
         click.echo(f"   Team ID: {workflow.team_id}")
@@ -642,13 +655,15 @@ def execute_workflow(
             input_config=input_cfg,
         )
 
-        click.echo(f"\nSuccessfully triggered workflow execution!")
+        click.echo("\nSuccessfully triggered workflow execution!")
         click.echo(f"   Execution ID: {execution.id}")
         click.echo(f"   Status: {execution.status}")
-        click.echo(f"\nTo check the status, run:")
+        click.echo("\nTo check the status, run:")
         click.echo(f"   datalab get-execution-status --execution_id {execution.id}")
-        click.echo(f"\n   Or poll until complete:")
-        click.echo(f"   datalab get-execution-status --execution_id {execution.id} --max_polls 300 --poll_interval 2")
+        click.echo("\n   Or poll until complete:")
+        click.echo(
+            f"   datalab get-execution-status --execution_id {execution.id} --max_polls 300 --poll_interval 2"
+        )
 
     except DatalabError as e:
         click.echo(f"Error: {e}", err=True)
@@ -667,13 +682,18 @@ def execute_workflow(
     help="Output file path to save execution results",
 )
 @click.option(
-    "--max_polls", default=1, type=int, help="Maximum number of polling attempts (1 for single check)"
+    "--max_polls",
+    default=1,
+    type=int,
+    help="Maximum number of polling attempts (1 for single check)",
 )
-@click.option("--poll_interval", default=1, type=int, help="Polling interval in seconds")
+@click.option(
+    "--poll_interval", default=1, type=int, help="Polling interval in seconds"
+)
 @click.option(
     "--download",
     is_flag=True,
-    help="Download actual results from presigned URLs (default: just show URLs)"
+    help="Download actual results from presigned URLs (default: just show URLs)",
 )
 @click.option("--api_key", required=False, help="Datalab API key")
 @click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
@@ -704,7 +724,7 @@ def get_execution_status(
             download_results=download,
         )
 
-        click.echo(f"Execution Status:")
+        click.echo("Execution Status:")
         click.echo(f"   Execution ID: {execution.id}")
         click.echo(f"   Workflow ID: {execution.workflow_id}")
         click.echo(f"   Status: {execution.status}")
@@ -712,7 +732,7 @@ def get_execution_status(
         click.echo(f"   Created: {execution.created}")
 
         if execution.steps:
-            click.echo(f"\n   Step Results:")
+            click.echo("\n   Step Results:")
             for step_name, step_data in execution.steps.items():
                 click.echo(f"\n   [{step_name}]")
 
@@ -720,20 +740,34 @@ def get_execution_status(
                 for file_key, file_step_data in step_data.items():
                     if isinstance(file_step_data, dict):
                         click.echo(f"\n      File/Group: {file_key}")
-                        click.echo(f"         Step ID: {file_step_data.get('id', 'N/A')}")
-                        click.echo(f"         Status: {file_step_data.get('status', 'N/A')}")
+                        click.echo(
+                            f"         Step ID: {file_step_data.get('id', 'N/A')}"
+                        )
+                        click.echo(
+                            f"         Status: {file_step_data.get('status', 'N/A')}"
+                        )
 
-                        if file_step_data.get('started_at'):
-                            click.echo(f"         Started: {file_step_data.get('started_at')}")
-                        if file_step_data.get('finished_at'):
-                            click.echo(f"         Finished: {file_step_data.get('finished_at')}")
-                        if file_step_data.get('file_ids'):
-                            click.echo(f"         Files: {', '.join(file_step_data.get('file_ids'))}")
+                        if file_step_data.get("started_at"):
+                            click.echo(
+                                f"         Started: {file_step_data.get('started_at')}"
+                            )
+                        if file_step_data.get("finished_at"):
+                            click.echo(
+                                f"         Finished: {file_step_data.get('finished_at')}"
+                            )
+                        if file_step_data.get("file_ids"):
+                            click.echo(
+                                f"         Files: {', '.join(file_step_data.get('file_ids'))}"
+                            )
 
                         if "output_url" in file_step_data and not download:
-                            click.echo(f"         Output URL: {file_step_data.get('output_url')}")
+                            click.echo(
+                                f"         Output URL: {file_step_data.get('output_url')}"
+                            )
                         elif download and "downloaded_data" in file_step_data:
-                            click.echo(f"         Results: {json.dumps(file_step_data['downloaded_data'], indent=12)}")
+                            click.echo(
+                                f"         Results: {json.dumps(file_step_data['downloaded_data'], indent=12)}"
+                            )
                     else:
                         click.echo(f"      {file_step_data}")
 
@@ -750,7 +784,9 @@ def get_execution_status(
 
 
 @click.command()
-@click.option("--definition", required=True, help="Path to workflow definition JSON file")
+@click.option(
+    "--definition", required=True, help="Path to workflow definition JSON file"
+)
 def visualize_workflow(definition: str):
     """Visualize workflow DAG from a JSON definition file"""
     try:
@@ -763,7 +799,7 @@ def visualize_workflow(definition: str):
         if not definition_path.exists():
             raise DatalabError(f"Definition file not found: {definition}")
 
-        with open(definition_path, 'r') as f:
+        with open(definition_path, "r") as f:
             workflow_def = json.load(f)
 
         name = workflow_def.get("name", "Unnamed Workflow")
@@ -776,9 +812,9 @@ def visualize_workflow(definition: str):
         # Build dependency graph
         step_map = {step["unique_name"]: step for step in steps}
 
-        click.echo(f"\n{'='*70}")
+        click.echo(f"\n{'=' * 70}")
         click.echo(f"Workflow: {name}")
-        click.echo(f"{'='*70}\n")
+        click.echo(f"{'=' * 70}\n")
 
         # Build parent/child maps
         children = defaultdict(list)
@@ -788,9 +824,13 @@ def visualize_workflow(definition: str):
                 children[dep].append(step_name)
 
         # Topological sort to determine layers
-        in_degree = {step["unique_name"]: len(step.get("depends_on", [])) for step in steps}
+        in_degree = {
+            step["unique_name"]: len(step.get("depends_on", [])) for step in steps
+        }
         layers = []
-        queue = deque([s["unique_name"] for s in steps if in_degree[s["unique_name"]] == 0])
+        queue = deque(
+            [s["unique_name"] for s in steps if in_degree[s["unique_name"]] == 0]
+        )
 
         while queue:
             layer = []
@@ -844,11 +884,17 @@ def _render_dag_simple(layers, children, step_map):
 
             # Show the step - color code by step type
             step_color = "blue" if "marker" in step_key else "magenta"
-            click.echo(f"  • {click.style(step_name, fg=step_color)} ({click.style(step_key, fg='white', dim=True)})")
+            click.echo(
+                f"  • {click.style(step_name, fg=step_color)} ({click.style(step_key, fg='white', dim=True)})"
+            )
 
             # Show dependencies if any
             if depends:
-                click.echo(click.style(f"    ← depends on: {', '.join(depends)}", fg="white", dim=True))
+                click.echo(
+                    click.style(
+                        f"    ← depends on: {', '.join(depends)}", fg="white", dim=True
+                    )
+                )
 
         # Show what comes next
         if layer_idx < len(layers) - 1:
