@@ -137,6 +137,12 @@ class AsyncDatalabClient:
             if data.get("status") == "complete":
                 return data
 
+            # Handle expired status explicitly (terminal error state)
+            if data.get("status") == "expired":
+                raise DatalabAPIError(
+                    data.get("error", "Result has expired and is no longer available.")
+                )
+
             if not data.get("success", True) and not data.get("status") == "processing":
                 raise DatalabAPIError(
                     f"Processing failed: {data.get('error', 'Unknown error')}"
