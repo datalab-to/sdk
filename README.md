@@ -38,7 +38,7 @@ Workflows allow you to chain multiple document processing steps together. Each w
 
 **Note:** All workflow operations require authentication. Make sure you have set your `DATALAB_API_KEY` environment variable or pass `api_key` when creating the client (see [Authentication](#authentication) section above).
 
-For more Workflow tips, see our [examples here](./examples/README.md) and [documentation](https://documentation.datalab.to/docs/recipes/workflows/workflow-concepts).
+For more Workflow tips, see our [documentation](https://documentation.datalab.to/docs/recipes/workflows/workflow-concepts).
 
 ## CLI Usage
 
@@ -47,9 +47,6 @@ The SDK includes a command-line interface:
 ```bash
 # Convert document to markdown
 datalab convert document.pdf
-
-# OCR with JSON output
-datalab ocr document.pdf --output-format json
 
 # Workflow commands
 datalab create-workflow --help
