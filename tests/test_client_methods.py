@@ -123,7 +123,9 @@ class TestConvertMethod:
                     )
 
                     assert (output_path.with_suffix(".chunks.json")).exists()
-                    saved_chunks = json.loads((output_path.with_suffix(".chunks.json")).read_text())
+                    saved_chunks = json.loads(
+                        (output_path.with_suffix(".chunks.json")).read_text()
+                    )
                     assert saved_chunks == {"some_content": True}
 
     def test_convert_sync_with_processing_options(self, temp_dir):
@@ -133,9 +135,7 @@ class TestConvertMethod:
         pdf_file.write_bytes(b"%PDF-1.4\n%Test PDF content\n%%EOF\n")
 
         # Create processing options
-        options = ConvertOptions(
-            force_ocr=True, output_format="html", use_llm=True, max_pages=5
-        )
+        options = ConvertOptions(output_format="html", max_pages=5)
 
         # Mock API responses
         mock_initial_response = {

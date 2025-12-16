@@ -29,7 +29,7 @@ from datalab_sdk import DatalabClient, WorkflowStep
 
 def load_workflow_definition(definition_path: str) -> dict:
     """Load workflow definition from JSON file"""
-    with open(definition_path, 'r') as f:
+    with open(definition_path, "r") as f:
         return json.load(f)
 
 
@@ -40,15 +40,12 @@ def create_workflow_from_definition(client: DatalabClient, workflow_def: dict):
             step_key=step["step_key"],
             unique_name=step["unique_name"],
             settings=step["settings"],
-            depends_on=step.get("depends_on", [])
+            depends_on=step.get("depends_on", []),
         )
         for step in workflow_def["steps"]
     ]
 
-    return client.create_workflow(
-        name=workflow_def["name"],
-        steps=steps
-    )
+    return client.create_workflow(name=workflow_def["name"], steps=steps)
 
 
 def create_simple_workflow(client: DatalabClient):
@@ -60,9 +57,8 @@ def create_simple_workflow(client: DatalabClient):
             settings={
                 "max_pages": 10,
                 "output_format": "json",
-                "force_ocr": False
             },
-            depends_on=[]
+            depends_on=[],
         ),
         WorkflowStep(
             step_key="marker_extract",
@@ -72,16 +68,15 @@ def create_simple_workflow(client: DatalabClient):
                     "title": {"type": "string"},
                     "author": {"type": "string"},
                     "date": {"type": "string"},
-                    "summary": {"type": "string"}
+                    "summary": {"type": "string"},
                 }
             },
-            depends_on=["parse_document"]
-        )
+            depends_on=["parse_document"],
+        ),
     ]
 
     return client.create_workflow(
-        name="Document Parser with Metadata Extraction",
-        steps=steps
+        name="Document Parser with Metadata Extraction", steps=steps
     )
 
 
@@ -89,16 +84,13 @@ def main():
     parser = argparse.ArgumentParser(
         description="Create a workflow from JSON definition or hardcoded example"
     )
-    parser.add_argument(
-        "--definition",
-        help="Path to workflow definition JSON file"
-    )
+    parser.add_argument("--definition", help="Path to workflow definition JSON file")
     parser.add_argument(
         "--replace",
         action="append",
         nargs=2,
         metavar=("TOKEN", "VALUE"),
-        help="Replace tokens in definition (e.g., --replace YOUR_API_KEY abc123)"
+        help="Replace tokens in definition (e.g., --replace YOUR_API_KEY abc123)",
     )
     args = parser.parse_args()
 
@@ -132,7 +124,7 @@ def main():
 
     # Display results
     print("✅ Workflow created successfully!\n")
-    print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print(f"ID:         {workflow.id}")
     print(f"Name:       {workflow.name}")
     print(f"Team ID:    {workflow.team_id}")
@@ -148,13 +140,13 @@ def main():
             print(f"     Depends on: {', '.join(step.depends_on)}")
     print()
 
-    print(f"💡 Next steps:")
-    print(f"   1. Execute this workflow:")
-    print(f"      python recipes/workflows/tutorial/execute_workflow.py \\")
+    print("💡 Next steps:")
+    print("   1. Execute this workflow:")
+    print("      python recipes/workflows/tutorial/execute_workflow.py \\")
     print(f"          --workflow_id {workflow.id} \\")
-    print(f"          --file_url https://example.com/doc.pdf")
+    print("          --file_url https://example.com/doc.pdf")
     print()
-    print(f"   2. Or use the CLI:")
+    print("   2. Or use the CLI:")
     print(f"      datalab execute-workflow --workflow_id {workflow.id} \\")
     json_example = '{"file_urls": ["https://example.com/doc.pdf"]}'
     print(f"          --input_config '{json_example}'")

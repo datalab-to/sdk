@@ -67,34 +67,28 @@ def marker_options(func):
         type=click.Choice(["markdown", "html", "json", "chunks"]),
         help="Output format",
     )(func)
-    func = click.option("--force_ocr", is_flag=True, help="Force OCR on every page")(
-        func
-    )
-    func = click.option(
-        "--format_lines", is_flag=True, help="Partially OCR lines for better formatting"
-    )(func)
     func = click.option(
         "--paginate", is_flag=True, help="Add page delimiters to output"
-    )(func)
-    func = click.option("--use_llm", is_flag=True, help="Use LLM to enhance accuracy")(
-        func
-    )
-    func = click.option(
-        "--strip_existing_ocr",
-        is_flag=True,
-        help="Remove existing OCR text and redo OCR",
     )(func)
     func = click.option(
         "--disable_image_extraction", is_flag=True, help="Disable extraction of images"
     )(func)
     func = click.option(
-        "--block_correction_prompt", help="Custom prompt for block correction"
+        "--disable_image_captions",
+        is_flag=True,
+        help="Disable synthetic image captions/descriptions in output",
     )(func)
     func = click.option(
         "--page_schema", help="Schema to set to do structured extraction"
     )(func)
     func = click.option(
         "--add_block_ids", is_flag=True, help="Add block IDs to HTML output"
+    )(func)
+    func = click.option(
+        "--mode",
+        type=click.Choice(["fast", "balanced", "accurate"]),
+        default="balanced",
+        help="OCR mode",
     )(func)
     return func
 
@@ -248,15 +242,12 @@ def process_documents(
     poll_interval: int,
     # Convert-specific options
     output_format: Optional[str] = None,
-    force_ocr: bool = False,
-    format_lines: bool = False,
     paginate: bool = False,
-    use_llm: bool = False,
-    strip_existing_ocr: bool = False,
     disable_image_extraction: bool = False,
-    block_correction_prompt: Optional[str] = None,
+    disable_image_captions: bool = False,
     page_schema: Optional[str] = None,
     add_block_ids: bool = False,
+    mode: str = "balanced",
 ):
     """Unified document processing function"""
     try:
@@ -290,17 +281,14 @@ def process_documents(
             options = ConvertOptions(
                 output_format=output_format,
                 max_pages=max_pages,
-                force_ocr=force_ocr,
-                format_lines=format_lines,
                 paginate=paginate,
-                use_llm=use_llm,
-                strip_existing_ocr=strip_existing_ocr,
                 disable_image_extraction=disable_image_extraction,
+                disable_image_captions=disable_image_captions,
                 page_range=page_range,
-                block_correction_prompt=block_correction_prompt,
                 skip_cache=skip_cache,
                 page_schema=page_schema,
                 add_block_ids=add_block_ids,
+                mode=mode,
             )
         else:  # method == "ocr"
             options = OCROptions(
@@ -355,15 +343,12 @@ def convert(
     max_polls: int,
     poll_interval: int,
     output_format: str,
-    force_ocr: bool,
-    format_lines: bool,
     paginate: bool,
-    use_llm: bool,
-    strip_existing_ocr: bool,
     disable_image_extraction: bool,
-    block_correction_prompt: Optional[str],
+    disable_image_captions: bool,
     page_schema: Optional[str],
     add_block_ids: bool,
+    mode: str,
 ):
     """Convert documents to markdown, HTML, or JSON"""
     process_documents(
@@ -380,48 +365,12 @@ def convert(
         max_polls=max_polls,
         poll_interval=poll_interval,
         output_format=output_format,
-        force_ocr=force_ocr,
-        format_lines=format_lines,
         paginate=paginate,
-        use_llm=use_llm,
-        strip_existing_ocr=strip_existing_ocr,
         disable_image_extraction=disable_image_extraction,
-        block_correction_prompt=block_correction_prompt,
+        disable_image_captions=disable_image_captions,
         page_schema=page_schema,
         add_block_ids=add_block_ids,
-    )
-
-
-@click.command()
-@click.argument("path", type=click.Path(exists=True))
-@common_options
-def ocr(
-    path: str,
-    api_key: str,
-    output_dir: str,
-    max_pages: Optional[int],
-    extensions: Optional[str],
-    max_concurrent: int,
-    base_url: str,
-    page_range: Optional[str],
-    skip_cache: bool,
-    max_polls: int,
-    poll_interval: int,
-):
-    """Perform OCR on documents"""
-    process_documents(
-        path=path,
-        method="ocr",
-        api_key=api_key,
-        output_dir=output_dir,
-        max_pages=max_pages,
-        extensions=extensions,
-        max_concurrent=max_concurrent,
-        base_url=base_url,
-        page_range=page_range,
-        skip_cache=skip_cache,
-        max_polls=max_polls,
-        poll_interval=poll_interval,
+        mode=mode,
     )
 
 
@@ -905,7 +854,6 @@ def _render_dag_simple(layers, children, step_map):
 
 # Add commands to CLI group
 cli.add_command(convert)
-cli.add_command(ocr)
 cli.add_command(create_workflow)
 cli.add_command(get_workflow)
 cli.add_command(get_step_types)
