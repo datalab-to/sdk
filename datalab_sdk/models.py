@@ -87,6 +87,32 @@ class OCROptions(ProcessingOptions):
 
 
 @dataclass
+class FormFillingOptions(ProcessingOptions):
+    """Options for form filling"""
+
+    field_data: Dict[str, Dict[str, str]] = field(default_factory=dict)
+    context: Optional[str] = None  # Optional context to guide form filling
+    confidence_threshold: float = 0.5  # Minimum confidence for field matching (0.0-1.0)
+
+    def to_form_data(self) -> Dict[str, Any]:
+        """Convert to form data format for API requests"""
+        # Start with parent's form data
+        form_data = super().to_form_data()
+
+        # field_data must be JSON string
+        form_data["field_data"] = (None, json.dumps(self.field_data))
+
+        # Add context if provided
+        if self.context is not None:
+            form_data["context"] = (None, self.context)
+
+        # Add confidence_threshold
+        form_data["confidence_threshold"] = (None, str(self.confidence_threshold))
+
+        return form_data
+
+
+@dataclass
 class ConversionResult:
     """Result from document conversion (marker endpoint)"""
 
@@ -346,3 +372,57 @@ class OCRResult:
                 f,
                 indent=2,
             )
+
+
+@dataclass
+class FormFillingResult:
+    """Result from form filling"""
+
+    status: str
+    success: Optional[bool] = None
+    error: Optional[str] = None
+    output_format: Optional[str] = None  # "pdf" or "png"
+    output_base64: Optional[str] = None  # Base64-encoded filled form
+    fields_filled: Optional[List[str]] = None  # List of field keys that were successfully filled
+    fields_not_found: Optional[List[str]] = None  # List of field keys that couldn't be matched
+    runtime: Optional[float] = None
+    page_count: Optional[int] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
+    versions: Optional[Union[Dict[str, Any], str]] = None
+
+    def save_output(self, output_path: Union[str, Path]) -> None:
+        """Save the filled form to a file"""
+        output_path = Path(output_path)
+
+        if not self.output_base64:
+            raise ValueError("No output data available to save")
+
+        # Determine file extension based on output_format
+        if self.output_format == "png":
+            output_path = output_path.with_suffix(".png")
+        elif self.output_format == "pdf":
+            output_path = output_path.with_suffix(".pdf")
+        else:
+            # Default to PDF if format is unknown
+            output_path = output_path.with_suffix(".pdf")
+
+        # Decode and save base64 data
+        with open(output_path, "wb") as f:
+            f.write(base64.b64decode(self.output_base64))
+
+        # Save metadata if available
+        metadata = {
+            "status": self.status,
+            "success": self.success,
+            "error": self.error,
+            "output_format": self.output_format,
+            "fields_filled": self.fields_filled,
+            "fields_not_found": self.fields_not_found,
+            "runtime": self.runtime,
+            "page_count": self.page_count,
+            "cost_breakdown": self.cost_breakdown,
+            "versions": self.versions,
+        }
+
+        with open(output_path.with_suffix(".metadata.json"), "w", encoding="utf-8") as f:
+            json.dump(metadata, f, indent=2)
