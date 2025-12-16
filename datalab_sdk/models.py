@@ -44,6 +44,7 @@ class ConvertOptions(ProcessingOptions):
     use_llm: bool = False
     strip_existing_ocr: bool = False
     disable_image_extraction: bool = False
+    disable_image_captions: bool = False
     disable_ocr_math: bool = False
     block_correction_prompt: Optional[str] = None
     additional_config: Optional[Dict[str, Any]] = None
