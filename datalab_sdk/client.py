@@ -27,6 +27,8 @@ from datalab_sdk.models import (
     ProcessingOptions,
     ConvertOptions,
     OCROptions,
+    FormFillingOptions,
+    FormFillingResult,
     Workflow,
     WorkflowStep,
     WorkflowExecution,
@@ -339,6 +341,70 @@ class AsyncDatalabClient:
 
         # Save output if requested
         if save_output and result.success:
+            output_path = Path(save_output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            result.save_output(output_path)
+
+        return result
+
+    async def fill(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[FormFillingOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> FormFillingResult:
+        """
+        Fill PDF or image forms with provided field data
+
+        Args:
+            file_path: Path to the file to fill
+            file_url: URL of the file to fill
+            options: Form filling options (must include field_data)
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        if options is None:
+            raise ValueError("options must be provided with field_data")
+
+        initial_data = await self._make_request(
+            "POST",
+            "/api/v1/fill",
+            data=self.get_form_params(
+                file_path=file_path, file_url=file_url, options=options
+            ),
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        result = FormFillingResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            output_format=result_data.get("output_format"),
+            output_base64=result_data.get("output_base64"),
+            fields_filled=result_data.get("fields_filled"),
+            fields_not_found=result_data.get("fields_not_found"),
+            runtime=result_data.get("runtime"),
+            page_count=result_data.get("page_count"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            versions=result_data.get("versions"),
+        )
+
+        # Save output if requested
+        if save_output and result.success and result.output_base64:
             output_path = Path(save_output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             result.save_output(output_path)
@@ -1009,6 +1075,37 @@ class DatalabClient:
         return self._run_async(
             self._async_client.ocr(
                 file_path=file_path,
+                options=options,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def fill(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[FormFillingOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> FormFillingResult:
+        """
+        Fill PDF or image forms with provided field data (sync version)
+
+        Args:
+            file_path: Path to the file to fill
+            file_url: URL of the file to fill
+            options: Form filling options (must include field_data)
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        return self._run_async(
+            self._async_client.fill(
+                file_path=file_path,
+                file_url=file_url,
                 options=options,
                 save_output=save_output,
                 max_polls=max_polls,
