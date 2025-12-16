@@ -67,22 +67,8 @@ def marker_options(func):
         type=click.Choice(["markdown", "html", "json", "chunks"]),
         help="Output format",
     )(func)
-    func = click.option("--force_ocr", is_flag=True, help="Force OCR on every page")(
-        func
-    )
-    func = click.option(
-        "--format_lines", is_flag=True, help="Partially OCR lines for better formatting"
-    )(func)
     func = click.option(
         "--paginate", is_flag=True, help="Add page delimiters to output"
-    )(func)
-    func = click.option("--use_llm", is_flag=True, help="Use LLM to enhance accuracy")(
-        func
-    )
-    func = click.option(
-        "--strip_existing_ocr",
-        is_flag=True,
-        help="Remove existing OCR text and redo OCR",
     )(func)
     func = click.option(
         "--disable_image_extraction", is_flag=True, help="Disable extraction of images"
@@ -93,14 +79,17 @@ def marker_options(func):
         help="Disable synthetic image captions/descriptions in output",
     )(func)
     func = click.option(
-        "--block_correction_prompt", help="Custom prompt for block correction"
-    )(func)
-    func = click.option(
         "--page_schema", help="Schema to set to do structured extraction"
     )(func)
     func = click.option(
         "--add_block_ids", is_flag=True, help="Add block IDs to HTML output"
     )(func)
+    func = click.option(
+        "--mode",
+        type=click.Choice(["fast", "balanced", "accurate"]),
+        default="balanced",
+        help="OCR mode",
+    )
     return func
 
 
@@ -253,16 +242,12 @@ def process_documents(
     poll_interval: int,
     # Convert-specific options
     output_format: Optional[str] = None,
-    force_ocr: bool = False,
-    format_lines: bool = False,
     paginate: bool = False,
-    use_llm: bool = False,
-    strip_existing_ocr: bool = False,
     disable_image_extraction: bool = False,
     disable_image_captions: bool = False,
-    block_correction_prompt: Optional[str] = None,
     page_schema: Optional[str] = None,
     add_block_ids: bool = False,
+    mode: str = "balanced",
 ):
     """Unified document processing function"""
     try:
@@ -296,18 +281,14 @@ def process_documents(
             options = ConvertOptions(
                 output_format=output_format,
                 max_pages=max_pages,
-                force_ocr=force_ocr,
-                format_lines=format_lines,
                 paginate=paginate,
-                use_llm=use_llm,
-                strip_existing_ocr=strip_existing_ocr,
                 disable_image_extraction=disable_image_extraction,
                 disable_image_captions=disable_image_captions,
                 page_range=page_range,
-                block_correction_prompt=block_correction_prompt,
                 skip_cache=skip_cache,
                 page_schema=page_schema,
                 add_block_ids=add_block_ids,
+                mode=mode,
             )
         else:  # method == "ocr"
             options = OCROptions(
@@ -362,16 +343,12 @@ def convert(
     max_polls: int,
     poll_interval: int,
     output_format: str,
-    force_ocr: bool,
-    format_lines: bool,
     paginate: bool,
-    use_llm: bool,
-    strip_existing_ocr: bool,
     disable_image_extraction: bool,
     disable_image_captions: bool,
-    block_correction_prompt: Optional[str],
     page_schema: Optional[str],
     add_block_ids: bool,
+    mode: str,
 ):
     """Convert documents to markdown, HTML, or JSON"""
     process_documents(
@@ -388,16 +365,12 @@ def convert(
         max_polls=max_polls,
         poll_interval=poll_interval,
         output_format=output_format,
-        force_ocr=force_ocr,
-        format_lines=format_lines,
         paginate=paginate,
-        use_llm=use_llm,
-        strip_existing_ocr=strip_existing_ocr,
         disable_image_extraction=disable_image_extraction,
         disable_image_captions=disable_image_captions,
-        block_correction_prompt=block_correction_prompt,
         page_schema=page_schema,
         add_block_ids=add_block_ids,
+        mode=mode,
     )
 
 

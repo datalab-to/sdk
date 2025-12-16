@@ -38,15 +38,9 @@ class ConvertOptions(ProcessingOptions):
     """Options for marker conversion"""
 
     # Marker specific options
-    force_ocr: bool = False
-    format_lines: bool = False
     paginate: bool = False
-    use_llm: bool = False
-    strip_existing_ocr: bool = False
     disable_image_extraction: bool = False
     disable_image_captions: bool = False
-    disable_ocr_math: bool = False
-    block_correction_prompt: Optional[str] = None
     additional_config: Optional[Dict[str, Any]] = None
     page_schema: Optional[Dict[str, Any]] = None
     segmentation_schema: Optional[str] = None  # JSON string for document segmentation
@@ -55,7 +49,7 @@ class ConvertOptions(ProcessingOptions):
         None  # Comma-separated list: 'track_changes', 'chart_understanding'
     )
     output_format: str = "markdown"  # markdown, json, html, chunks
-    mode: str = "fast"  # fast, balanced, accurate
+    mode: str = "balanced"  # fast, balanced, accurate
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
     extras: Optional[str] = None  # comma-separated extras
@@ -383,8 +377,12 @@ class FormFillingResult:
     error: Optional[str] = None
     output_format: Optional[str] = None  # "pdf" or "png"
     output_base64: Optional[str] = None  # Base64-encoded filled form
-    fields_filled: Optional[List[str]] = None  # List of field keys that were successfully filled
-    fields_not_found: Optional[List[str]] = None  # List of field keys that couldn't be matched
+    fields_filled: Optional[List[str]] = (
+        None  # List of field keys that were successfully filled
+    )
+    fields_not_found: Optional[List[str]] = (
+        None  # List of field keys that couldn't be matched
+    )
     runtime: Optional[float] = None
     page_count: Optional[int] = None
     cost_breakdown: Optional[Dict[str, Any]] = None
@@ -424,5 +422,7 @@ class FormFillingResult:
             "versions": self.versions,
         }
 
-        with open(output_path.with_suffix(".metadata.json"), "w", encoding="utf-8") as f:
+        with open(
+            output_path.with_suffix(".metadata.json"), "w", encoding="utf-8"
+        ) as f:
             json.dump(metadata, f, indent=2)

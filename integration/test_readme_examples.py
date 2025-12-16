@@ -98,9 +98,7 @@ class TestAPIMethodExamples:
 
         # With options
         options = ConvertOptions(
-            force_ocr=True,
             output_format="html",
-            use_llm=False,  # Keep false for cost reasons
             max_pages=1,
         )
         result = client.convert(DATA_DIR / "adversarial.pdf", options=options)
@@ -294,9 +292,7 @@ class TestProcessingOptionsVariations:
         from datalab_sdk import ConvertOptions
 
         options = ConvertOptions()
-        assert options.force_ocr is False
         assert options.output_format == "markdown"
-        assert options.use_llm is False
         assert options.max_pages is None
 
     def test_processing_options_custom_values(self):
@@ -304,9 +300,7 @@ class TestProcessingOptionsVariations:
         from datalab_sdk import ConvertOptions
 
         options = ConvertOptions(
-            force_ocr=True,
             output_format="html",
-            use_llm=False,  # Keep false for cost reasons
             max_pages=1,
         )
 

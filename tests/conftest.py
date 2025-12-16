@@ -143,9 +143,7 @@ async def mock_async_client(mock_server):
 @pytest.fixture
 def processing_options():
     """Create sample processing options"""
-    return ConvertOptions(
-        force_ocr=True, output_format="markdown", use_llm=False, max_pages=10
-    )
+    return ConvertOptions(output_format="markdown", max_pages=10)
 
 
 @pytest.fixture
