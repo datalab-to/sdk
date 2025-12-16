@@ -88,6 +88,11 @@ def marker_options(func):
         "--disable_image_extraction", is_flag=True, help="Disable extraction of images"
     )(func)
     func = click.option(
+        "--disable_image_captions",
+        is_flag=True,
+        help="Disable synthetic image captions/descriptions in output",
+    )(func)
+    func = click.option(
         "--block_correction_prompt", help="Custom prompt for block correction"
     )(func)
     func = click.option(
@@ -254,6 +259,7 @@ def process_documents(
     use_llm: bool = False,
     strip_existing_ocr: bool = False,
     disable_image_extraction: bool = False,
+    disable_image_captions: bool = False,
     block_correction_prompt: Optional[str] = None,
     page_schema: Optional[str] = None,
     add_block_ids: bool = False,
@@ -296,6 +302,7 @@ def process_documents(
                 use_llm=use_llm,
                 strip_existing_ocr=strip_existing_ocr,
                 disable_image_extraction=disable_image_extraction,
+                disable_image_captions=disable_image_captions,
                 page_range=page_range,
                 block_correction_prompt=block_correction_prompt,
                 skip_cache=skip_cache,
@@ -361,6 +368,7 @@ def convert(
     use_llm: bool,
     strip_existing_ocr: bool,
     disable_image_extraction: bool,
+    disable_image_captions: bool,
     block_correction_prompt: Optional[str],
     page_schema: Optional[str],
     add_block_ids: bool,
@@ -386,6 +394,7 @@ def convert(
         use_llm=use_llm,
         strip_existing_ocr=strip_existing_ocr,
         disable_image_extraction=disable_image_extraction,
+        disable_image_captions=disable_image_captions,
         block_correction_prompt=block_correction_prompt,
         page_schema=page_schema,
         add_block_ids=add_block_ids,
