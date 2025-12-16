@@ -89,7 +89,7 @@ def marker_options(func):
         type=click.Choice(["fast", "balanced", "accurate"]),
         default="balanced",
         help="OCR mode",
-    )
+    )(func)
     return func
 
 
@@ -371,39 +371,6 @@ def convert(
         page_schema=page_schema,
         add_block_ids=add_block_ids,
         mode=mode,
-    )
-
-
-@click.command()
-@click.argument("path", type=click.Path(exists=True))
-@common_options
-def ocr(
-    path: str,
-    api_key: str,
-    output_dir: str,
-    max_pages: Optional[int],
-    extensions: Optional[str],
-    max_concurrent: int,
-    base_url: str,
-    page_range: Optional[str],
-    skip_cache: bool,
-    max_polls: int,
-    poll_interval: int,
-):
-    """Perform OCR on documents"""
-    process_documents(
-        path=path,
-        method="ocr",
-        api_key=api_key,
-        output_dir=output_dir,
-        max_pages=max_pages,
-        extensions=extensions,
-        max_concurrent=max_concurrent,
-        base_url=base_url,
-        page_range=page_range,
-        skip_cache=skip_cache,
-        max_polls=max_polls,
-        poll_interval=poll_interval,
     )
 
 
@@ -887,7 +854,6 @@ def _render_dag_simple(layers, children, step_map):
 
 # Add commands to CLI group
 cli.add_command(convert)
-cli.add_command(ocr)
 cli.add_command(create_workflow)
 cli.add_command(get_workflow)
 cli.add_command(get_step_types)

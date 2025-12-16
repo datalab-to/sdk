@@ -30,10 +30,6 @@ client = DatalabClient() # use env var from above, or pass api_key="your_api_key
 # Convert PDF to markdown
 result = client.convert("document.pdf")
 print(result.markdown)
-
-# OCR a document
-ocr_result = client.ocr("document.pdf")
-print(ocr_result.pages)  # Get all text as string
 ```
 
 ## Workflows
