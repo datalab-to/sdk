@@ -89,7 +89,7 @@ class OCROptions(ProcessingOptions):
 class FormFillingOptions(ProcessingOptions):
     """Options for form filling"""
 
-    field_data: Dict[str, Dict[str, str]]  # Required: {"field_key": {"value": "...", "description": "..."}}
+    field_data: Dict[str, Dict[str, str]] = field(default_factory=dict)
     context: Optional[str] = None  # Optional context to guide form filling
     confidence_threshold: float = 0.5  # Minimum confidence for field matching (0.0-1.0)
 
