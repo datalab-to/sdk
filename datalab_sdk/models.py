@@ -46,13 +46,12 @@ class ConvertOptions(ProcessingOptions):
     segmentation_schema: Optional[str] = None  # JSON string for document segmentation
     save_checkpoint: bool = False
     extras: Optional[str] = (
-        None  # Comma-separated list: 'track_changes', 'chart_understanding'
+        None  # Comma-separated list: 'track_changes', 'chart_understanding', 'force_marker'
     )
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "balanced"  # fast, balanced, accurate
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
-    extras: Optional[str] = None  # comma-separated extras
     add_block_ids: bool = False  # add block IDs to HTML output
 
     def to_form_data(self) -> Dict[str, Any]:
