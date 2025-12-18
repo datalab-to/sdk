@@ -46,14 +46,14 @@ class ConvertOptions(ProcessingOptions):
     segmentation_schema: Optional[str] = None  # JSON string for document segmentation
     save_checkpoint: bool = False
     extras: Optional[str] = (
-        None  # Comma-separated list: 'track_changes', 'chart_understanding'
+        None  # Comma-separated list: 'track_changes', 'chart_understanding', 'extract_links'
     )
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "balanced"  # fast, balanced, accurate
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
-    extras: Optional[str] = None  # comma-separated extras
     add_block_ids: bool = False  # add block IDs to HTML output
+    extract_links: bool = False  # Extract and merge hyperlinks from PDF
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -120,6 +120,7 @@ class ConversionResult:
     segmentation_results: Optional[Dict[str, Any]] = None
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
+    links: Optional[List[Dict[str, Any]]] = None  # Extracted links [{page, text, url, bbox, link_type}]
     error: Optional[str] = None
     page_count: Optional[int] = None
     status: str = "complete"

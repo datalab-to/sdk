@@ -282,6 +282,7 @@ class AsyncDatalabClient:
             segmentation_results=result_data.get("segmentation_results"),
             images=result_data.get("images"),
             metadata=result_data.get("metadata"),
+            links=result_data.get("links"),
             error=result_data.get("error"),
             page_count=result_data.get("page_count"),
             status=result_data.get("status", "complete"),
