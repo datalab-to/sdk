@@ -34,6 +34,8 @@ from datalab_sdk.models import (
     WorkflowExecution,
     InputConfig,
     UploadedFileMetadata,
+    ProviderResponse,
+    PageResult,
 )
 from datalab_sdk.settings import settings
 
@@ -998,6 +1000,196 @@ class AsyncDatalabClient:
             "message": response.get("message", f"File {file_id} deleted successfully"),
         }
 
+    # Provider methods
+    async def _call_provider(
+        self,
+        provider_name: str,
+        endpoint_path: str,
+        file_path: Union[str, Path],
+        page_range: Optional[str] = None,
+        mathpix_app_id: Optional[str] = None,
+        mathpix_app_key: Optional[str] = None,
+    ) -> ProviderResponse:
+        """
+        Internal helper for calling provider endpoints.
+
+        Args:
+            provider_name: Display name of the provider (for error messages)
+            endpoint_path: API endpoint path (e.g., "olmocr", "mathpix")
+            file_path: Path to the file to process
+            page_range: Optional page range (e.g., "1-3" or "1,3,5")
+            mathpix_app_id: Mathpix App ID (required for mathpix provider)
+            mathpix_app_key: Mathpix App Key (required for mathpix provider)
+
+        Returns:
+            ProviderResponse object
+        """
+        await self._ensure_session()
+
+        # Prepare file data
+        filename, file_data, mime_type = self._prepare_file_data(file_path)
+
+        # Prepare form data
+        form_data = aiohttp.FormData()
+        form_data.add_field("file", file_data, filename=filename, content_type=mime_type)
+
+        if page_range:
+            form_data.add_field("page_range", page_range)
+
+        # Prepare headers
+        headers = {}
+        if provider_name.lower() == "mathpix":
+            if not mathpix_app_id or not mathpix_app_key:
+                raise DatalabAPIError(
+                    "Mathpix requires app_id and app_key credentials"
+                )
+            headers["X-Mathpix-App-Id"] = mathpix_app_id
+            headers["X-Mathpix-App-Key"] = mathpix_app_key
+
+        # Make request
+        url = f"{self.base_url}/api/v1/providers/{endpoint_path}"
+        try:
+            async with self._session.post(url, data=form_data, headers=headers) as response:
+                try:
+                    response.raise_for_status()
+                    data = await response.json()
+                except aiohttp.ClientResponseError as e:
+                    try:
+                        error_data = await response.json()
+                        error_message = error_data.get("detail") or error_data.get("error") or str(e)
+                    except Exception:
+                        error_message = str(e)
+                    raise DatalabAPIError(
+                        error_message,
+                        e.status,
+                        error_data if "error_data" in locals() else None,
+                    )
+        except asyncio.TimeoutError:
+            raise DatalabTimeoutError(
+                f"{provider_name} request timed out after {self.timeout} seconds"
+            )
+        except DatalabAPIError:
+            raise
+        except aiohttp.ClientError as e:
+            raise DatalabAPIError(f"{provider_name} request failed: {str(e)}")
+
+        # Parse response
+        pages = [
+            PageResult(
+                page_num=page.get("page_num", i),
+                success=page.get("success", False),
+                error=page.get("error"),
+                markdown=page.get("markdown"),
+                html=page.get("html"),
+                blocks=page.get("blocks"),
+                images=page.get("images"),
+            )
+            for i, page in enumerate(data.get("pages", []))
+        ]
+
+        return ProviderResponse(
+            success=data.get("success", False),
+            error=data.get("error"),
+            pages=pages,
+            runtime=data.get("runtime", 0.0),
+        )
+
+    async def olmocr(
+        self,
+        file_path: Union[str, Path],
+        page_range: Optional[str] = None,
+    ) -> ProviderResponse:
+        """
+        Process a document using OlmoOCR provider
+
+        Args:
+            file_path: Path to the file to process
+            page_range: Optional page range (e.g., "1-3" or "1,3,5")
+
+        Returns:
+            ProviderResponse object
+        """
+        return await self._call_provider("OlmoOCR", "olmocr", file_path, page_range)
+
+    async def rolmocr(
+        self,
+        file_path: Union[str, Path],
+        page_range: Optional[str] = None,
+    ) -> ProviderResponse:
+        """
+        Process a document using RolmoOCR provider
+
+        Args:
+            file_path: Path to the file to process
+            page_range: Optional page range (e.g., "1-3" or "1,3,5")
+
+        Returns:
+            ProviderResponse object
+        """
+        return await self._call_provider("RolmoOCR", "rolmocr", file_path, page_range)
+
+    async def dotsocr(
+        self,
+        file_path: Union[str, Path],
+        page_range: Optional[str] = None,
+    ) -> ProviderResponse:
+        """
+        Process a document using DotsOCR provider
+
+        Args:
+            file_path: Path to the file to process
+            page_range: Optional page range (e.g., "1-3" or "1,3,5")
+
+        Returns:
+            ProviderResponse object
+        """
+        return await self._call_provider("DotsOCR", "dotsocr", file_path, page_range)
+
+    async def deepseekocr(
+        self,
+        file_path: Union[str, Path],
+        page_range: Optional[str] = None,
+    ) -> ProviderResponse:
+        """
+        Process a document using DeepSeekOCR provider
+
+        Args:
+            file_path: Path to the file to process
+            page_range: Optional page range (e.g., "1-3" or "1,3,5")
+
+        Returns:
+            ProviderResponse object
+        """
+        return await self._call_provider("DeepSeekOCR", "deepseekocr", file_path, page_range)
+
+    async def mathpix(
+        self,
+        file_path: Union[str, Path],
+        app_id: str,
+        app_key: str,
+        page_range: Optional[str] = None,
+    ) -> ProviderResponse:
+        """
+        Process a document using Mathpix provider
+
+        Args:
+            file_path: Path to the file to process
+            app_id: Mathpix App ID
+            app_key: Mathpix App Key
+            page_range: Optional page range (e.g., "1-3" or "1,3,5")
+
+        Returns:
+            ProviderResponse object
+        """
+        return await self._call_provider(
+            "Mathpix",
+            "mathpix",
+            file_path,
+            page_range,
+            mathpix_app_id=app_id,
+            mathpix_app_key=app_key,
+        )
+
 
 class DatalabClient:
     """Synchronous wrapper around AsyncDatalabClient"""
@@ -1301,4 +1493,62 @@ class DatalabClient:
         """
         return self._run_async(
             self._async_client.delete_workflow(workflow_id=workflow_id)
+        )
+
+    # Provider methods (sync)
+    def olmocr(
+        self,
+        file_path: Union[str, Path],
+        page_range: Optional[str] = None,
+    ) -> ProviderResponse:
+        """Process a document using OlmoOCR provider (sync version)"""
+        return self._run_async(
+            self._async_client.olmocr(file_path=file_path, page_range=page_range)
+        )
+
+    def rolmocr(
+        self,
+        file_path: Union[str, Path],
+        page_range: Optional[str] = None,
+    ) -> ProviderResponse:
+        """Process a document using RolmoOCR provider (sync version)"""
+        return self._run_async(
+            self._async_client.rolmocr(file_path=file_path, page_range=page_range)
+        )
+
+    def dotsocr(
+        self,
+        file_path: Union[str, Path],
+        page_range: Optional[str] = None,
+    ) -> ProviderResponse:
+        """Process a document using DotsOCR provider (sync version)"""
+        return self._run_async(
+            self._async_client.dotsocr(file_path=file_path, page_range=page_range)
+        )
+
+    def deepseekocr(
+        self,
+        file_path: Union[str, Path],
+        page_range: Optional[str] = None,
+    ) -> ProviderResponse:
+        """Process a document using DeepSeekOCR provider (sync version)"""
+        return self._run_async(
+            self._async_client.deepseekocr(file_path=file_path, page_range=page_range)
+        )
+
+    def mathpix(
+        self,
+        file_path: Union[str, Path],
+        app_id: str,
+        app_key: str,
+        page_range: Optional[str] = None,
+    ) -> ProviderResponse:
+        """Process a document using Mathpix provider (sync version)"""
+        return self._run_async(
+            self._async_client.mathpix(
+                file_path=file_path,
+                app_id=app_id,
+                app_key=app_key,
+                page_range=page_range,
+            )
         )

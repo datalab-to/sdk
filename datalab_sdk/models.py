@@ -426,3 +426,101 @@ class FormFillingResult:
             output_path.with_suffix(".metadata.json"), "w", encoding="utf-8"
         ) as f:
             json.dump(metadata, f, indent=2)
+
+
+@dataclass
+class PageResult:
+    """Result for a single page from provider endpoints"""
+
+    page_num: int
+    success: bool
+    error: Optional[str] = None
+    markdown: Optional[str] = None
+    html: Optional[str] = None
+    blocks: Optional[List[Any]] = None
+    images: Optional[Dict[str, str]] = None
+
+
+@dataclass
+class ProviderResponse:
+    """Response from provider endpoints (olmocr, rolmocr, dotsocr, deepseekocr, mathpix)"""
+
+    success: bool
+    error: Optional[str] = None
+    pages: List[PageResult] = field(default_factory=list)
+    runtime: float = 0.0
+
+    def get_markdown(self) -> str:
+        """Get concatenated markdown from all pages"""
+        markdown_parts = []
+        for page in self.pages:
+            if page.success and page.markdown:
+                markdown_parts.append(page.markdown)
+        return "\n\n---\n\n".join(markdown_parts)
+
+    def get_html(self) -> Optional[str]:
+        """Get concatenated HTML from all pages"""
+        html_parts = []
+        for page in self.pages:
+            if page.success and page.html:
+                html_parts.append(page.html)
+        return "\n".join(html_parts) if html_parts else None
+
+    def get_all_images(self) -> Dict[str, str]:
+        """Get all images from all pages"""
+        all_images = {}
+        for page in self.pages:
+            if page.images:
+                all_images.update(page.images)
+        return all_images
+
+    def save_output(
+        self, output_path: Union[str, Path], save_images: bool = True
+    ) -> None:
+        """Save the provider output to files"""
+        output_path = Path(output_path)
+
+        # Save markdown
+        markdown = self.get_markdown()
+        if markdown:
+            with open(output_path.with_suffix(".md"), "w", encoding="utf-8") as f:
+                f.write(markdown)
+
+        # Save HTML
+        html = self.get_html()
+        if html:
+            with open(output_path.with_suffix(".html"), "w", encoding="utf-8") as f:
+                f.write(html)
+
+        # Save images if present
+        if save_images:
+            images = self.get_all_images()
+            if images:
+                images_dir = output_path.parent
+                images_dir.mkdir(exist_ok=True)
+
+                for filename, base64_data in images.items():
+                    image_path = images_dir / filename
+                    with open(image_path, "wb") as f:
+                        f.write(base64.b64decode(base64_data))
+
+        # Save metadata
+        metadata = {
+            "success": self.success,
+            "error": self.error,
+            "runtime": self.runtime,
+            "page_count": len(self.pages),
+            "pages": [
+                {
+                    "page_num": page.page_num,
+                    "success": page.success,
+                    "error": page.error,
+                }
+                for page in self.pages
+            ],
+        }
+
+        with open(
+            output_path.with_suffix(".metadata.json"), "w", encoding="utf-8"
+        ) as f:
+            json.dump(metadata, f, indent=2)
