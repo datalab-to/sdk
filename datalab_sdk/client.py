@@ -125,6 +125,19 @@ class AsyncDatalabClient:
         except aiohttp.ClientError as e:
             raise DatalabAPIError(f"Request failed: {str(e)}")
 
+    @retry(
+        retry=retry_if_exception(
+            lambda e: isinstance(e, DatalabAPIError)
+            and getattr(e, "status_code", None) == 429
+        ),
+        stop=stop_after_attempt(10),
+        wait=wait_exponential_jitter(initial=5, max=120),
+        reraise=True,
+    )
+    async def _submit_with_retry(self, endpoint: str, data) -> Dict[str, Any]:
+        """POST submission with retry for rate limits (429)"""
+        return await self._make_request("POST", endpoint, data=data)
+
     async def _poll_result(
         self, check_url: str, max_polls: int = 300, poll_interval: int = 1
     ) -> Dict[str, Any]:
@@ -254,8 +267,7 @@ class AsyncDatalabClient:
         if options is None:
             options = ConvertOptions()
 
-        initial_data = await self._make_request(
-            "POST",
+        initial_data = await self._submit_with_retry(
             "/api/v1/marker",
             data=self.get_form_params(
                 file_path=file_path, file_url=file_url, options=options
@@ -314,8 +326,7 @@ class AsyncDatalabClient:
         if options is None:
             options = OCROptions()
 
-        initial_data = await self._make_request(
-            "POST",
+        initial_data = await self._submit_with_retry(
             "/api/v1/ocr",
             data=self.get_form_params(file_path=file_path, options=options),
         )
@@ -372,8 +383,7 @@ class AsyncDatalabClient:
         if options is None:
             raise ValueError("options must be provided with field_data")
 
-        initial_data = await self._make_request(
-            "POST",
+        initial_data = await self._submit_with_retry(
             "/api/v1/fill",
             data=self.get_form_params(
                 file_path=file_path, file_url=file_url, options=options
