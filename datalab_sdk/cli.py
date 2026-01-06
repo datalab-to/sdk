@@ -116,19 +116,21 @@ def find_files_in_directory(
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:
-    """Check if exception is a rate limit (429) or server error (5xx)"""
+    """Check if exception is a rate limit (429) error.
+
+    Note: We intentionally don't retry 5xx errors here because the retry wraps
+    the entire convert/ocr call (submission + polling). If a 5xx occurs during
+    polling, retrying would re-submit the job and create duplicates. The client
+    already has retry logic for transient errors during the polling phase.
+    """
     # Check DatalabError with status_code attribute
     if isinstance(exc, DatalabError):
         status_code = getattr(exc, "status_code", None)
         if status_code == 429:
             return True
-        if status_code is not None and status_code >= 500:
-            return True
     # Also check the error message string for 429 patterns
     error_str = str(exc)
     if "429" in error_str or "Too Many Requests" in error_str:
-        return True
-    if "503" in error_str or "502" in error_str or "500" in error_str:
         return True
     return False
 
