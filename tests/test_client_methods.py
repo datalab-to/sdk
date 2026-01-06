@@ -504,13 +504,13 @@ class TestClientErrorHandling:
             with patch.object(
                 client, "_make_request", new_callable=AsyncMock
             ) as mock_request:
-                # Setup mock to raise API error
+                # Setup mock to raise API error (use 400 since 429 is retried)
                 mock_request.side_effect = DatalabAPIError(
-                    "API rate limit exceeded", status_code=429
+                    "Bad request", status_code=400
                 )
 
                 # Test that error is propagated
-                with pytest.raises(DatalabAPIError, match="API rate limit exceeded"):
+                with pytest.raises(DatalabAPIError, match="Bad request"):
                     await client.ocr(pdf_file)
 
     def test_convert_unsuccessful_response(self, temp_dir):
