@@ -112,7 +112,9 @@ class AsyncDatalabClient:
             try:
                 error_data = await response.json()
                 # FastAPI returns errors in "detail" field, but some APIs use "error"
-                error_message = error_data.get("detail") or error_data.get("error") or str(e)
+                error_message = (
+                    error_data.get("detail") or error_data.get("error") or str(e)
+                )
             except Exception:
                 error_message = str(e)
             raise DatalabAPIError(
@@ -168,8 +170,8 @@ class AsyncDatalabClient:
                 )
             )
         ),
-        stop=stop_after_attempt(2),
-        wait=wait_exponential_jitter(max=0.5),
+        stop=stop_after_attempt(10),
+        wait=wait_exponential_jitter(initial=5, max=120),
         reraise=True,
     )
     async def _poll_get_with_retry(self, url: str) -> Dict[str, Any]:
@@ -185,7 +187,7 @@ class AsyncDatalabClient:
 
         # Read file content
         file_data = file_path.read_bytes()
-        
+
         # Check if file is empty
         if not file_data:
             raise DatalabFileError(
@@ -570,7 +572,9 @@ class AsyncDatalabClient:
 
         return {
             "success": response.get("success", True),
-            "message": response.get("message", f"Workflow {workflow_id} deleted successfully"),
+            "message": response.get(
+                "message", f"Workflow {workflow_id} deleted successfully"
+            ),
         }
 
     async def execute_workflow(
@@ -1236,9 +1240,7 @@ class DatalabClient:
         Returns:
             UploadedFileMetadata object with file information
         """
-        return self._run_async(
-            self._async_client.get_file_metadata(file_id=file_id)
-        )
+        return self._run_async(self._async_client.get_file_metadata(file_id=file_id))
 
     def get_file_download_url(
         self,
@@ -1260,7 +1262,9 @@ class DatalabClient:
                 - original_filename: Original filename
         """
         return self._run_async(
-            self._async_client.get_file_download_url(file_id=file_id, expires_in=expires_in)
+            self._async_client.get_file_download_url(
+                file_id=file_id, expires_in=expires_in
+            )
         )
 
     def delete_file(
@@ -1280,9 +1284,7 @@ class DatalabClient:
                 - success: Whether the deletion was successful
                 - message: Confirmation message
         """
-        return self._run_async(
-            self._async_client.delete_file(file_id=file_id)
-        )
+        return self._run_async(self._async_client.delete_file(file_id=file_id))
 
     def delete_workflow(self, workflow_id: int) -> Dict[str, Any]:
         """
