@@ -152,8 +152,8 @@ async def process_files_async(
     # Retry decorator for rate limit errors
     @retry(
         retry=retry_if_exception(_is_rate_limit_error),
-        stop=stop_after_attempt(5),
-        wait=wait_exponential_jitter(initial=2, max=60),
+        stop=stop_after_attempt(10),
+        wait=wait_exponential_jitter(initial=5, max=120),
         reraise=True,
     )
     async def call_api(client, file_path, output_path):
