@@ -34,6 +34,13 @@ from datalab_sdk.models import (
     WorkflowExecution,
     InputConfig,
     UploadedFileMetadata,
+    Team,
+    TeamDetail,
+    Member,
+    Invitation,
+    InvitationDetail,
+    SwitchTeamResponse,
+    AcceptInvitationResponse,
 )
 from datalab_sdk.settings import settings
 
@@ -998,6 +1005,437 @@ class AsyncDatalabClient:
             "message": response.get("message", f"File {file_id} deleted successfully"),
         }
 
+    # =============================================================================
+    # Team Management Methods
+    # =============================================================================
+
+    async def list_teams(self) -> list[Team]:
+        """
+        List all teams the user is a member of.
+
+        Returns:
+            List of Team objects
+        """
+        response = await self._make_request("GET", "/api/v1/teams")
+
+        return [
+            Team(
+                id=team_data["id"],
+                name=team_data["name"],
+                role=team_data["role"],
+            )
+            for team_data in response.get("teams", [])
+        ]
+
+    async def create_team(self, name: str) -> Team:
+        """
+        Create a new team.
+
+        The creating user becomes the admin of the new team.
+
+        Args:
+            name: Name of the team (max 100 characters)
+
+        Returns:
+            Team object
+        """
+        response = await self._make_request(
+            "POST",
+            "/api/v1/teams",
+            json={"name": name},
+        )
+
+        return Team(
+            id=response["id"],
+            name=response["name"],
+            role=response["role"],
+        )
+
+    async def get_team(self, team_id: int) -> TeamDetail:
+        """
+        Get team details.
+
+        Requires membership in the team.
+
+        Args:
+            team_id: ID of the team to retrieve
+
+        Returns:
+            TeamDetail object
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/teams/{team_id}",
+        )
+
+        return TeamDetail(
+            id=response["id"],
+            name=response["name"],
+            role=response["role"],
+            member_count=response["member_count"],
+        )
+
+    async def rename_team(self, team_id: int, name: str) -> Team:
+        """
+        Rename a team.
+
+        Requires admin role.
+
+        Args:
+            team_id: ID of the team to rename
+            name: New name for the team (max 100 characters)
+
+        Returns:
+            Team object with updated name
+        """
+        response = await self._make_request(
+            "PATCH",
+            f"/api/v1/teams/{team_id}",
+            json={"name": name},
+        )
+
+        return Team(
+            id=response["id"],
+            name=response["name"],
+            role=response["role"],
+        )
+
+    async def switch_team(self, team_id: int) -> SwitchTeamResponse:
+        """
+        Switch the user's active team.
+
+        Updates both the database (for cross-browser persistence)
+        and sets a cookie (for same-browser persistence).
+
+        Args:
+            team_id: ID of the team to switch to
+
+        Returns:
+            SwitchTeamResponse object
+        """
+        response = await self._make_request(
+            "POST",
+            f"/api/v1/teams/switch/{team_id}",
+        )
+
+        return SwitchTeamResponse(
+            success=response["success"],
+            team_id=response["team_id"],
+            team_name=response["team_name"],
+        )
+
+    # =============================================================================
+    # Member Management Methods
+    # =============================================================================
+
+    async def list_members(self, team_id: int) -> list[Member]:
+        """
+        List all members of a team.
+
+        Requires membership in the team.
+
+        Args:
+            team_id: ID of the team
+
+        Returns:
+            List of Member objects
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/teams/{team_id}/members",
+        )
+
+        return [
+            Member(
+                id=member_data["id"],
+                email=member_data["email"],
+                full_name=member_data["full_name"],
+                role=member_data["role"],
+            )
+            for member_data in response.get("members", [])
+        ]
+
+    async def change_member_role(
+        self, team_id: int, user_id: int, role: str
+    ) -> Member:
+        """
+        Change a member's role in a team.
+
+        Requires admin role. Cannot demote the last admin.
+
+        Args:
+            team_id: ID of the team
+            user_id: ID of the user whose role to change
+            role: New role ("admin" or "member")
+
+        Returns:
+            Member object with updated role
+        """
+        response = await self._make_request(
+            "PATCH",
+            f"/api/v1/teams/{team_id}/members/{user_id}",
+            json={"role": role},
+        )
+
+        return Member(
+            id=response["id"],
+            email=response["email"],
+            full_name=response["full_name"],
+            role=response["role"],
+        )
+
+    async def remove_member(self, team_id: int, user_id: int) -> Dict[str, Any]:
+        """
+        Remove a member from a team.
+
+        Requires admin role. Cannot remove the last admin.
+        Triggers safety net if removed user ends up with no teams.
+
+        Args:
+            team_id: ID of the team
+            user_id: ID of the user to remove
+
+        Returns:
+            Dictionary with success status and message
+        """
+        response = await self._make_request(
+            "DELETE",
+            f"/api/v1/teams/{team_id}/members/{user_id}",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "message": response.get("message", f"Removed user {user_id} from team"),
+        }
+
+    async def leave_team(self, team_id: int) -> Dict[str, Any]:
+        """
+        Leave a team.
+
+        Cannot leave if you're the last admin.
+        Triggers safety net if leaving results in no teams.
+
+        Args:
+            team_id: ID of the team to leave
+
+        Returns:
+            Dictionary with success status and message
+        """
+        response = await self._make_request(
+            "POST",
+            f"/api/v1/teams/{team_id}/leave",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "message": response.get("message", f"Left team {team_id}"),
+        }
+
+    # =============================================================================
+    # Invitation Methods (Team-scoped)
+    # =============================================================================
+
+    async def create_invitation(
+        self, team_id: int, email: str, role: str = "member"
+    ) -> Invitation:
+        """
+        Send an invitation to join a team.
+
+        Requires admin role.
+        Queues email to be sent via SAQ worker.
+
+        Args:
+            team_id: ID of the team
+            email: Email address to invite
+            role: Role to assign ("admin" or "member", default: "member")
+
+        Returns:
+            Invitation object
+        """
+        response = await self._make_request(
+            "POST",
+            f"/api/v1/teams/{team_id}/invitations",
+            json={"email": email, "role": role},
+        )
+
+        return Invitation(
+            id=response["id"],
+            email=response["email"],
+            role=response["role"],
+            status=response["status"],
+            invited_by_email=response["invited_by_email"],
+            invited_by_name=response["invited_by_name"],
+            expires_at=response["expires_at"],
+            created_at=response["created_at"],
+        )
+
+    async def list_invitations(self, team_id: int) -> list[Invitation]:
+        """
+        List pending invitations for a team.
+
+        Requires admin role.
+
+        Args:
+            team_id: ID of the team
+
+        Returns:
+            List of Invitation objects
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/teams/{team_id}/invitations",
+        )
+
+        return [
+            Invitation(
+                id=inv_data["id"],
+                email=inv_data["email"],
+                role=inv_data["role"],
+                status=inv_data["status"],
+                invited_by_email=inv_data["invited_by_email"],
+                invited_by_name=inv_data["invited_by_name"],
+                expires_at=inv_data["expires_at"],
+                created_at=inv_data["created_at"],
+            )
+            for inv_data in response.get("invitations", [])
+        ]
+
+    async def cancel_invitation(
+        self, team_id: int, invitation_id: int
+    ) -> Dict[str, Any]:
+        """
+        Cancel a pending invitation.
+
+        Requires admin role.
+
+        Args:
+            team_id: ID of the team
+            invitation_id: ID of the invitation to cancel
+
+        Returns:
+            Dictionary with success status and message
+        """
+        response = await self._make_request(
+            "DELETE",
+            f"/api/v1/teams/{team_id}/invitations/{invitation_id}",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "message": response.get(
+                "message", f"Cancelled invitation {invitation_id}"
+            ),
+        }
+
+    async def resend_invitation(
+        self, team_id: int, invitation_id: int
+    ) -> Invitation:
+        """
+        Resend an invitation - extends expiry and re-sends email.
+
+        Requires admin role.
+
+        Args:
+            team_id: ID of the team
+            invitation_id: ID of the invitation to resend
+
+        Returns:
+            Invitation object with updated expiry
+        """
+        response = await self._make_request(
+            "POST",
+            f"/api/v1/teams/{team_id}/invitations/{invitation_id}/resend",
+        )
+
+        return Invitation(
+            id=response["id"],
+            email=response["email"],
+            role=response["role"],
+            status=response["status"],
+            invited_by_email=response["invited_by_email"],
+            invited_by_name=response["invited_by_name"],
+            expires_at=response["expires_at"],
+            created_at=response["created_at"],
+        )
+
+    # =============================================================================
+    # Public Invitation Methods (by token)
+    # =============================================================================
+
+    async def get_invitation_by_token(self, token: str) -> InvitationDetail:
+        """
+        Get invitation details by token.
+
+        Public endpoint - no auth required.
+        Used to display invitation info before accept/decline.
+
+        Args:
+            token: Invitation token
+
+        Returns:
+            InvitationDetail object
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/invitations/{token}",
+        )
+
+        return InvitationDetail(
+            team_name=response["team_name"],
+            inviter_name=response["inviter_name"],
+            inviter_email=response["inviter_email"],
+            invited_email=response["invited_email"],
+            role=response["role"],
+            expires_at=response["expires_at"],
+            status=response["status"],
+        )
+
+    async def accept_invitation(self, token: str) -> AcceptInvitationResponse:
+        """
+        Accept an invitation to join a team.
+
+        Requires auth. Creates UserTeamLink and updates invitation status.
+        Sets the new team as the user's active team.
+
+        Args:
+            token: Invitation token
+
+        Returns:
+            AcceptInvitationResponse object
+        """
+        response = await self._make_request(
+            "POST",
+            f"/api/v1/invitations/{token}/accept",
+        )
+
+        return AcceptInvitationResponse(
+            success=response["success"],
+            team_id=response["team_id"],
+            team_name=response["team_name"],
+        )
+
+    async def decline_invitation(self, token: str) -> Dict[str, Any]:
+        """
+        Decline an invitation to join a team.
+
+        Requires auth. Updates invitation status to declined.
+
+        Args:
+            token: Invitation token
+
+        Returns:
+            Dictionary with success status and message
+        """
+        response = await self._make_request(
+            "POST",
+            f"/api/v1/invitations/{token}/decline",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "message": response.get("message", "Invitation declined"),
+        }
+
 
 class DatalabClient:
     """Synchronous wrapper around AsyncDatalabClient"""
@@ -1301,4 +1739,113 @@ class DatalabClient:
         """
         return self._run_async(
             self._async_client.delete_workflow(workflow_id=workflow_id)
+        )
+
+    # Team Management Methods (sync)
+    def list_teams(self) -> list[Team]:
+        """List all teams the user is a member of (sync version)"""
+        return self._run_async(self._async_client.list_teams())
+
+    def create_team(self, name: str) -> Team:
+        """Create a new team (sync version)"""
+        return self._run_async(self._async_client.create_team(name=name))
+
+    def get_team(self, team_id: int) -> TeamDetail:
+        """Get team details (sync version)"""
+        return self._run_async(self._async_client.get_team(team_id=team_id))
+
+    def rename_team(self, team_id: int, name: str) -> Team:
+        """Rename a team (sync version)"""
+        return self._run_async(
+            self._async_client.rename_team(team_id=team_id, name=name)
+        )
+
+    def switch_team(self, team_id: int) -> SwitchTeamResponse:
+        """Switch the user's active team (sync version)"""
+        return self._run_async(
+            self._async_client.switch_team(team_id=team_id)
+        )
+
+    # Member Management Methods (sync)
+    def list_members(self, team_id: int) -> list[Member]:
+        """List all members of a team (sync version)"""
+        return self._run_async(
+            self._async_client.list_members(team_id=team_id)
+        )
+
+    def change_member_role(
+        self, team_id: int, user_id: int, role: str
+    ) -> Member:
+        """Change a member's role in a team (sync version)"""
+        return self._run_async(
+            self._async_client.change_member_role(
+                team_id=team_id, user_id=user_id, role=role
+            )
+        )
+
+    def remove_member(self, team_id: int, user_id: int) -> Dict[str, Any]:
+        """Remove a member from a team (sync version)"""
+        return self._run_async(
+            self._async_client.remove_member(team_id=team_id, user_id=user_id)
+        )
+
+    def leave_team(self, team_id: int) -> Dict[str, Any]:
+        """Leave a team (sync version)"""
+        return self._run_async(
+            self._async_client.leave_team(team_id=team_id)
+        )
+
+    # Invitation Methods (sync)
+    def create_invitation(
+        self, team_id: int, email: str, role: str = "member"
+    ) -> Invitation:
+        """Send an invitation to join a team (sync version)"""
+        return self._run_async(
+            self._async_client.create_invitation(
+                team_id=team_id, email=email, role=role
+            )
+        )
+
+    def list_invitations(self, team_id: int) -> list[Invitation]:
+        """List pending invitations for a team (sync version)"""
+        return self._run_async(
+            self._async_client.list_invitations(team_id=team_id)
+        )
+
+    def cancel_invitation(
+        self, team_id: int, invitation_id: int
+    ) -> Dict[str, Any]:
+        """Cancel a pending invitation (sync version)"""
+        return self._run_async(
+            self._async_client.cancel_invitation(
+                team_id=team_id, invitation_id=invitation_id
+            )
+        )
+
+    def resend_invitation(
+        self, team_id: int, invitation_id: int
+    ) -> Invitation:
+        """Resend an invitation (sync version)"""
+        return self._run_async(
+            self._async_client.resend_invitation(
+                team_id=team_id, invitation_id=invitation_id
+            )
+        )
+
+    def get_invitation_by_token(self, token: str) -> InvitationDetail:
+        """Get invitation details by token (sync version)"""
+        return self._run_async(
+            self._async_client.get_invitation_by_token(token=token)
+        )
+
+    def accept_invitation(self, token: str) -> AcceptInvitationResponse:
+        """Accept an invitation to join a team (sync version)"""
+        return self._run_async(
+            self._async_client.accept_invitation(token=token)
+        )
+
+    def decline_invitation(self, token: str) -> Dict[str, Any]:
+        """Decline an invitation to join a team (sync version)"""
+        return self._run_async(
+            self._async_client.decline_invitation(token=token)
         )

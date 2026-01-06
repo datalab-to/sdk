@@ -426,3 +426,82 @@ class FormFillingResult:
             output_path.with_suffix(".metadata.json"), "w", encoding="utf-8"
         ) as f:
             json.dump(metadata, f, indent=2)
+
+
+# =============================================================================
+# Team Models
+# =============================================================================
+
+
+@dataclass
+class Team:
+    """Represents a team"""
+
+    id: int
+    name: str
+    role: str  # User's role in this team (admin, member)
+
+
+@dataclass
+class TeamDetail:
+    """Detailed team information"""
+
+    id: int
+    name: str
+    role: str  # User's role in this team
+    member_count: int
+
+
+@dataclass
+class Member:
+    """Represents a team member"""
+
+    id: int
+    email: str
+    full_name: str
+    role: str  # admin or member
+
+
+@dataclass
+class Invitation:
+    """Represents a team invitation"""
+
+    id: int
+    email: str
+    role: str  # admin or member
+    status: str  # pending, accepted, declined, expired
+    invited_by_email: str
+    invited_by_name: str
+    expires_at: str  # ISO datetime string
+    created_at: str  # ISO datetime string
+
+
+@dataclass
+class InvitationDetail:
+    """Public invitation details (for viewing invitation by token)"""
+
+    team_name: str
+    inviter_name: str
+    inviter_email: str
+    invited_email: str
+    role: str
+    expires_at: str  # ISO datetime string
+    status: str
+
+
+@dataclass
+class SwitchTeamResponse:
+    """Response from switching active team"""
+
+    success: bool
+    team_id: int
+    team_name: str
+
+
+@dataclass
+class AcceptInvitationResponse:
+    """Response from accepting an invitation"""
+
+    success: bool
+    team_id: int
+    team_name: str
