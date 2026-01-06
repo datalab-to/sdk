@@ -9,6 +9,7 @@ import asyncio
 from pathlib import Path
 from typing import Optional, List
 import click
+from tqdm import tqdm
 
 from datalab_sdk.client import AsyncDatalabClient, DatalabClient
 from datalab_sdk.mimetypes import SUPPORTED_EXTENSIONS
@@ -167,9 +168,19 @@ async def process_files_async(
                     "page_count": None,
                 }
 
-    # Process all files concurrently
-    tasks = [process_single_file(file_path) for file_path in files]
-    results = await asyncio.gather(*tasks)
+    # Process all files concurrently with progress bar
+    tasks = [asyncio.create_task(process_single_file(file_path)) for file_path in files]
+    results = []
+
+    with tqdm(total=len(tasks), desc="Processing", unit="file") as pbar:
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            results.append(result)
+            # Update progress bar description with current file
+            filename = Path(result["file_path"]).name
+            status = "✓" if result["success"] else "✗"
+            pbar.set_postfix_str(f"{status} {filename[:30]}")
+            pbar.update(1)
 
     return results
 
