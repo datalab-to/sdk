@@ -10,6 +10,12 @@ from pathlib import Path
 from typing import Optional, List
 import click
 from tqdm import tqdm
+from tenacity import (
+    retry,
+    stop_after_attempt,
+    wait_exponential_jitter,
+    retry_if_exception,
+)
 
 from datalab_sdk.client import AsyncDatalabClient, DatalabClient
 from datalab_sdk.mimetypes import SUPPORTED_EXTENSIONS
@@ -109,6 +115,24 @@ def find_files_in_directory(
     return files
 
 
+def _is_rate_limit_error(exc: Exception) -> bool:
+    """Check if exception is a rate limit (429) or server error (5xx)"""
+    # Check DatalabError with status_code attribute
+    if isinstance(exc, DatalabError):
+        status_code = getattr(exc, "status_code", None)
+        if status_code == 429:
+            return True
+        if status_code is not None and status_code >= 500:
+            return True
+    # Also check the error message string for 429 patterns
+    error_str = str(exc)
+    if "429" in error_str or "Too Many Requests" in error_str:
+        return True
+    if "503" in error_str or "502" in error_str or "500" in error_str:
+        return True
+    return False
+
+
 async def process_files_async(
     files: List[Path],
     output_dir: Path,
@@ -123,6 +147,32 @@ async def process_files_async(
     """Process files asynchronously"""
     semaphore = asyncio.Semaphore(max_concurrent)
 
+    # Retry decorator for rate limit errors
+    @retry(
+        retry=retry_if_exception(_is_rate_limit_error),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential_jitter(initial=2, max=60),
+        reraise=True,
+    )
+    async def call_api(client, file_path, output_path):
+        """Make API call with retry logic for rate limits"""
+        if method == "convert":
+            return await client.convert(
+                file_path,
+                options=options,
+                save_output=output_path,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        else:  # method == 'ocr'
+            return await client.ocr(
+                file_path,
+                options=options,
+                save_output=output_path,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+
     async def process_single_file(file_path: Path) -> dict:
         async with semaphore:
             try:
@@ -135,22 +185,7 @@ async def process_files_async(
                 async with AsyncDatalabClient(
                     api_key=api_key, base_url=base_url
                 ) as client:
-                    if method == "convert":
-                        result = await client.convert(
-                            file_path,
-                            options=options,
-                            save_output=output_path,
-                            max_polls=max_polls,
-                            poll_interval=poll_interval,
-                        )
-                    else:  # method == 'ocr'
-                        result = await client.ocr(
-                            file_path,
-                            options=options,
-                            save_output=output_path,
-                            max_polls=max_polls,
-                            poll_interval=poll_interval,
-                        )
+                    result = await call_api(client, file_path, output_path)
 
                 return {
                     "file_path": str(file_path),
