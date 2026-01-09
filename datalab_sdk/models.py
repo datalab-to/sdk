@@ -3,7 +3,7 @@ Datalab SDK data models
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Union
+from typing import Dict, List, Optional, Any, Union, Literal
 from pathlib import Path
 import json
 import base64
@@ -121,6 +121,7 @@ class ConversionResult:
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
+    error_in: Optional[Literal["VALIDATION", "INFERENCE", "OTHER"]] = None
     page_count: Optional[int] = None
     status: str = "complete"
     checkpoint_id: Optional[str] = None
@@ -375,6 +376,7 @@ class FormFillingResult:
     status: str
     success: Optional[bool] = None
     error: Optional[str] = None
+    error_in: Optional[Literal["VALIDATION", "INFERENCE", "OTHER"]] = None
     output_format: Optional[str] = None  # "pdf" or "png"
     output_base64: Optional[str] = None  # Base64-encoded filled form
     fields_filled: Optional[List[str]] = (

@@ -9,6 +9,7 @@ import asyncio
 from pathlib import Path
 from typing import Optional, List
 import click
+from tqdm import tqdm
 
 from datalab_sdk.client import AsyncDatalabClient, DatalabClient
 from datalab_sdk.mimetypes import SUPPORTED_EXTENSIONS
@@ -122,6 +123,25 @@ async def process_files_async(
     """Process files asynchronously"""
     semaphore = asyncio.Semaphore(max_concurrent)
 
+    async def call_api(client, file_path, output_path):
+        """Make API call - client handles retries for rate limits"""
+        if method == "convert":
+            return await client.convert(
+                file_path,
+                options=options,
+                save_output=output_path,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        else:  # method == 'ocr'
+            return await client.ocr(
+                file_path,
+                options=options,
+                save_output=output_path,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+
     async def process_single_file(file_path: Path) -> dict:
         async with semaphore:
             try:
@@ -134,22 +154,7 @@ async def process_files_async(
                 async with AsyncDatalabClient(
                     api_key=api_key, base_url=base_url
                 ) as client:
-                    if method == "convert":
-                        result = await client.convert(
-                            file_path,
-                            options=options,
-                            save_output=output_path,
-                            max_polls=max_polls,
-                            poll_interval=poll_interval,
-                        )
-                    else:  # method == 'ocr'
-                        result = await client.ocr(
-                            file_path,
-                            options=options,
-                            save_output=output_path,
-                            max_polls=max_polls,
-                            poll_interval=poll_interval,
-                        )
+                    result = await call_api(client, file_path, output_path)
 
                 return {
                     "file_path": str(file_path),
@@ -167,9 +172,19 @@ async def process_files_async(
                     "page_count": None,
                 }
 
-    # Process all files concurrently
-    tasks = [process_single_file(file_path) for file_path in files]
-    results = await asyncio.gather(*tasks)
+    # Process all files concurrently with progress bar
+    tasks = [asyncio.create_task(process_single_file(file_path)) for file_path in files]
+    results = []
+
+    with tqdm(total=len(tasks), desc="Processing", unit="file") as pbar:
+        for coro in asyncio.as_completed(tasks):
+            result = await coro
+            results.append(result)
+            # Update progress bar description with current file
+            filename = Path(result["file_path"]).name
+            status = "✓" if result["success"] else "✗"
+            pbar.set_postfix_str(f"{status} {filename[:30]}")
+            pbar.update(1)
 
     return results
 
