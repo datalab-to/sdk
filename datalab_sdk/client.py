@@ -29,6 +29,8 @@ from datalab_sdk.models import (
     OCROptions,
     FormFillingOptions,
     FormFillingResult,
+    CreateDocumentOptions,
+    CreateDocumentResult,
     Workflow,
     WorkflowStep,
     WorkflowExecution,
@@ -137,6 +139,21 @@ class AsyncDatalabClient:
     async def _submit_with_retry(self, endpoint: str, data) -> Dict[str, Any]:
         """POST submission with retry for rate limits (429)"""
         return await self._make_request("POST", endpoint, data=data)
+
+    @retry(
+        retry=retry_if_exception(
+            lambda e: isinstance(e, DatalabAPIError)
+            and getattr(e, "status_code", None) == 429
+        ),
+        stop=stop_after_attempt(10),
+        wait=wait_exponential_jitter(initial=5, max=120),
+        reraise=True,
+    )
+    async def _submit_json_with_retry(
+        self, endpoint: str, json_data: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """POST JSON submission with retry for rate limits (429)"""
+        return await self._make_request("POST", endpoint, json=json_data)
 
     async def _poll_result(
         self, check_url: str, max_polls: int = 300, poll_interval: int = 1
@@ -411,6 +428,76 @@ class AsyncDatalabClient:
             output_base64=result_data.get("output_base64"),
             fields_filled=result_data.get("fields_filled"),
             fields_not_found=result_data.get("fields_not_found"),
+            runtime=result_data.get("runtime"),
+            page_count=result_data.get("page_count"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            versions=result_data.get("versions"),
+        )
+
+        # Save output if requested
+        if save_output and result.success and result.output_base64:
+            output_path = Path(save_output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            result.save_output(output_path)
+
+        return result
+
+    async def create_document(
+        self,
+        markdown: str,
+        output_format: str = "docx",
+        webhook_url: Optional[str] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> CreateDocumentResult:
+        """
+        Create a document from markdown with track changes support
+
+        The input markdown can contain track changes markup:
+        - <ins data-revision-author="..." data-revision-datetime="...">inserted text</ins>
+        - <del data-revision-author="..." data-revision-datetime="...">deleted text</del>
+        - <comment data-comment-author="..." data-comment-datetime="..." text="...">commented text</comment>
+
+        Args:
+            markdown: The markdown content to convert to a document
+            output_format: Output format (currently only 'docx' is supported)
+            webhook_url: Optional webhook URL to call when the request is complete
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+
+        Returns:
+            CreateDocumentResult with the generated document
+        """
+        options = CreateDocumentOptions(
+            markdown=markdown,
+            output_format=output_format,
+            webhook_url=webhook_url,
+        )
+
+        initial_data = await self._submit_json_with_retry(
+            "/api/v1/create-document",
+            json_data=options.to_json_data(),
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        result = CreateDocumentResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            output_format=result_data.get("output_format"),
+            output_base64=result_data.get("output_base64"),
             runtime=result_data.get("runtime"),
             page_count=result_data.get("page_count"),
             cost_breakdown=result_data.get("cost_breakdown"),
@@ -1123,6 +1210,45 @@ class DatalabClient:
                 file_path=file_path,
                 file_url=file_url,
                 options=options,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def create_document(
+        self,
+        markdown: str,
+        output_format: str = "docx",
+        webhook_url: Optional[str] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> CreateDocumentResult:
+        """
+        Create a document from markdown with track changes support (sync version)
+
+        The input markdown can contain track changes markup:
+        - <ins data-revision-author="..." data-revision-datetime="...">inserted text</ins>
+        - <del data-revision-author="..." data-revision-datetime="...">deleted text</del>
+        - <comment data-comment-author="..." data-comment-datetime="..." text="...">commented text</comment>
+
+        Args:
+            markdown: The markdown content to convert to a document
+            output_format: Output format (currently only 'docx' is supported)
+            webhook_url: Optional webhook URL to call when the request is complete
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+
+        Returns:
+            CreateDocumentResult with the generated document
+        """
+        return self._run_async(
+            self._async_client.create_document(
+                markdown=markdown,
+                output_format=output_format,
+                webhook_url=webhook_url,
                 save_output=save_output,
                 max_polls=max_polls,
                 poll_interval=poll_interval,

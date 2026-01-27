@@ -428,3 +428,72 @@ class FormFillingResult:
             output_path.with_suffix(".metadata.json"), "w", encoding="utf-8"
         ) as f:
             json.dump(metadata, f, indent=2)
+
+
+@dataclass
+class CreateDocumentOptions:
+    """Options for creating documents from markdown"""
+
+    markdown: str  # The markdown content to convert
+    output_format: str = "docx"  # Currently only 'docx' is supported
+    webhook_url: Optional[str] = None  # Optional webhook URL for completion notification
+
+    def to_json_data(self) -> Dict[str, Any]:
+        """Convert to JSON data format for API requests"""
+        data = {
+            "markdown": self.markdown,
+            "output_format": self.output_format,
+        }
+        if self.webhook_url is not None:
+            data["webhook_url"] = self.webhook_url
+        return data
+
+
+@dataclass
+class CreateDocumentResult:
+    """Result from document creation"""
+
+    status: str
+    success: Optional[bool] = None
+    error: Optional[str] = None
+    output_format: Optional[str] = None  # "docx"
+    output_base64: Optional[str] = None  # Base64-encoded document
+    runtime: Optional[float] = None
+    page_count: Optional[int] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
+    versions: Optional[Union[Dict[str, Any], str]] = None
+
+    def save_output(self, output_path: Union[str, Path]) -> None:
+        """Save the created document to a file"""
+        output_path = Path(output_path)
+
+        if not self.output_base64:
+            raise ValueError("No output data available to save")
+
+        # Determine file extension based on output_format
+        if self.output_format == "docx":
+            output_path = output_path.with_suffix(".docx")
+        else:
+            # Default to DOCX if format is unknown
+            output_path = output_path.with_suffix(".docx")
+
+        # Decode and save base64 data
+        with open(output_path, "wb") as f:
+            f.write(base64.b64decode(self.output_base64))
+
+        # Save metadata if available
+        metadata = {
+            "status": self.status,
+            "success": self.success,
+            "error": self.error,
+            "output_format": self.output_format,
+            "runtime": self.runtime,
+            "page_count": self.page_count,
+            "cost_breakdown": self.cost_breakdown,
+            "versions": self.versions,
+        }
+
+        with open(
+            output_path.with_suffix(".metadata.json"), "w", encoding="utf-8"
+        ) as f:
+            json.dump(metadata, f, indent=2)
