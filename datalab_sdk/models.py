@@ -41,6 +41,7 @@ class ConvertOptions(ProcessingOptions):
     paginate: bool = False
     disable_image_extraction: bool = False
     disable_image_captions: bool = False
+    fence_synthetic_captions: bool = False
     additional_config: Optional[Dict[str, Any]] = None
     page_schema: Optional[Dict[str, Any]] = None
     segmentation_schema: Optional[str] = None  # JSON string for document segmentation
