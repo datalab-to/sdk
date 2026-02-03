@@ -54,6 +54,7 @@ class ConvertOptions(ProcessingOptions):
     # 'table_row_bboxes', 'extract_links', 'infographic', 'new_block_types'
     extras: Optional[str] = None
     add_block_ids: bool = False  # add block IDs to HTML output
+    include_markdown_in_chunks: bool = False  # include markdown in chunks output
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
