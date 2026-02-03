@@ -41,19 +41,20 @@ class ConvertOptions(ProcessingOptions):
     paginate: bool = False
     disable_image_extraction: bool = False
     disable_image_captions: bool = False
+    fence_synthetic_captions: bool = False
     additional_config: Optional[Dict[str, Any]] = None
     page_schema: Optional[Dict[str, Any]] = None
     segmentation_schema: Optional[str] = None  # JSON string for document segmentation
     save_checkpoint: bool = False
-    extras: Optional[str] = (
-        None  # Comma-separated list: 'track_changes', 'chart_understanding'
-    )
     output_format: str = "markdown"  # markdown, json, html, chunks
     mode: str = "balanced"  # fast, balanced, accurate
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
-    extras: Optional[str] = None  # comma-separated extras
+    # Comma-separated list of extra features: 'track_changes', 'chart_understanding',
+    # 'table_row_bboxes', 'extract_links', 'infographic', 'new_block_types'
+    extras: Optional[str] = None
     add_block_ids: bool = False  # add block IDs to HTML output
+    include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""

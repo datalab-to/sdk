@@ -7,7 +7,7 @@ readme = "README.md"
 license = "MIT"
 repository = "https://github.com/datalab-to/sdk"
 keywords = ["datalab", "sdk", "document-intelligence", "api"]
-version = "0.2.1"
+version = "0.2.2"
 description = "SDK for the Datalab document intelligence API"
 requires-python = ">=3.10"
 dependencies = [
