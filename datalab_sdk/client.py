@@ -289,6 +289,7 @@ class AsyncDatalabClient:
             success=result_data.get("success", False),
             output_format=result_data.get("output_format", options.output_format),
             markdown=result_data.get("markdown"),
+            llm_markdown=result_data.get("llm_markdown"),
             html=result_data.get("html"),
             json=result_data.get("json"),
             chunks=result_data.get("chunks"),

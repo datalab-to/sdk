@@ -46,7 +46,7 @@ class ConvertOptions(ProcessingOptions):
     page_schema: Optional[Dict[str, Any]] = None
     segmentation_schema: Optional[str] = None  # JSON string for document segmentation
     save_checkpoint: bool = False
-    output_format: str = "markdown"  # markdown, json, html, chunks
+    output_format: str = "markdown"  # markdown, json, html, chunks, llm_markdown
     mode: str = "balanced"  # fast, balanced, accurate
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
@@ -114,6 +114,7 @@ class ConversionResult:
     success: bool
     output_format: str
     markdown: Optional[str] = None
+    llm_markdown: Optional[str] = None
     html: Optional[str] = None
     json: Optional[Dict[str, Any]] = None
     chunks: Optional[Dict[str, Any]] = None
@@ -141,6 +142,10 @@ class ConversionResult:
         if self.markdown:
             with open(output_path.with_suffix(".md"), "w", encoding="utf-8") as f:
                 f.write(self.markdown)
+
+        if self.llm_markdown:
+            with open(output_path.with_suffix(".llm.md"), "w", encoding="utf-8") as f:
+                f.write(self.llm_markdown)
 
         if self.html:
             with open(output_path.with_suffix(".html"), "w", encoding="utf-8") as f:
