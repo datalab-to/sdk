@@ -65,7 +65,7 @@ def marker_options(func):
         "--format",
         "output_format",
         default="markdown",
-        type=click.Choice(["markdown", "html", "json", "chunks"]),
+        type=click.Choice(["markdown", "html", "json", "chunks", "llm_markdown"]),
         help="Output format",
     )(func)
     func = click.option(
