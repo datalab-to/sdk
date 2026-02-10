@@ -91,6 +91,11 @@ def marker_options(func):
         default="balanced",
         help="OCR mode",
     )(func)
+    func = click.option(
+        "--token_efficient_markdown",
+        is_flag=True,
+        help="Generate token-efficient markdown optimized for LLM consumption",
+    )(func)
     return func
 
 
@@ -263,6 +268,7 @@ def process_documents(
     page_schema: Optional[str] = None,
     add_block_ids: bool = False,
     mode: str = "balanced",
+    token_efficient_markdown: bool = False,
 ):
     """Unified document processing function"""
     try:
@@ -304,6 +310,7 @@ def process_documents(
                 page_schema=page_schema,
                 add_block_ids=add_block_ids,
                 mode=mode,
+                token_efficient_markdown=token_efficient_markdown,
             )
         else:  # method == "ocr"
             options = OCROptions(
@@ -364,6 +371,7 @@ def convert(
     page_schema: Optional[str],
     add_block_ids: bool,
     mode: str,
+    token_efficient_markdown: bool,
 ):
     """Convert documents to markdown, HTML, or JSON"""
     process_documents(
@@ -386,6 +394,7 @@ def convert(
         page_schema=page_schema,
         add_block_ids=add_block_ids,
         mode=mode,
+        token_efficient_markdown=token_efficient_markdown,
     )
 
 
