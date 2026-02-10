@@ -3,6 +3,7 @@ Datalab API client - async core with sync wrapper
 """
 
 import asyncio
+import json
 import mimetypes
 import aiohttp
 from tenacity import (
@@ -34,6 +35,9 @@ from datalab_sdk.models import (
     WorkflowExecution,
     InputConfig,
     UploadedFileMetadata,
+    CustomPipelineResult,
+    PipelineListItem,
+    CustomPipelineAccessInfo,
 )
 from datalab_sdk.settings import settings
 
@@ -711,6 +715,195 @@ class AsyncDatalabClient:
         # Return the last status even if not complete (after max_polls)
         return execution
 
+    # Custom pipeline methods
+    async def create_custom_pipeline(
+        self,
+        request_description: str,
+        file_paths: list[Union[str, Path]],
+        name: Optional[str] = None,
+        original_params: Optional[Dict[str, Any]] = None,
+        create_data_pipeline: bool = False,
+        customizer_session_id: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 2,
+    ) -> CustomPipelineResult:
+        """
+        Create a custom pipeline by submitting a description and example files.
+
+        Submits the request and polls until the pipeline is ready (or fails).
+
+        Args:
+            request_description: Natural language description of desired pipeline behavior
+            file_paths: List of paths to example documents (PDFs, images, etc.)
+            name: Optional short display name for the pipeline (max 120 chars)
+            original_params: Optional base ChandraParsePipeline parameters
+            create_data_pipeline: Whether to also create a data pipeline
+            customizer_session_id: Optional session ID for resuming customizer
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+
+        Returns:
+            CustomPipelineResult with pipeline_id on success
+        """
+        await self._ensure_session()
+
+        form_data = aiohttp.FormData()
+        form_data.add_field("request", request_description)
+
+        if name is not None:
+            form_data.add_field("name", name)
+
+        if original_params is not None:
+            form_data.add_field("original_params", json.dumps(original_params))
+
+        form_data.add_field("create_data_pipeline", str(create_data_pipeline).lower())
+
+        if customizer_session_id is not None:
+            form_data.add_field("customizer_session_id", customizer_session_id)
+
+        # Add files
+        for file_path in file_paths:
+            filename, file_data, mime_type = self._prepare_file_data(file_path)
+            form_data.add_field(
+                "files", file_data, filename=filename, content_type=mime_type
+            )
+
+        # Submit
+        initial_data = await self._submit_with_retry(
+            "/api/v1/custom_pipelines",
+            data=form_data,
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        check_url = initial_data["response_check_url"]
+
+        # Poll for completion
+        for _ in range(max_polls):
+            status_data = await self._poll_get_with_retry(
+                check_url
+                if check_url.startswith("http")
+                else f"{self.base_url}/{check_url.lstrip('/')}"
+            )
+
+            result = CustomPipelineResult(
+                status=status_data.get("status", "processing"),
+                pipeline_id=status_data.get("pipeline_id"),
+                request_description=status_data.get("request_description"),
+                sent_at=status_data.get("sent_at"),
+                success=status_data.get("success"),
+                error_message=status_data.get("error_message"),
+                runtime=status_data.get("runtime"),
+                completed_at=status_data.get("completed_at"),
+            )
+
+            if result.status in ("completed", "failed"):
+                return result
+
+            await asyncio.sleep(poll_interval)
+
+        raise DatalabTimeoutError(
+            f"Custom pipeline creation timed out after {max_polls * poll_interval} seconds"
+        )
+
+    async def get_custom_pipeline_status(
+        self,
+        lookup_key: str,
+    ) -> CustomPipelineResult:
+        """
+        Check the status of a custom pipeline generation request.
+
+        Args:
+            lookup_key: The lookup key from the initial submission response_check_url
+
+        Returns:
+            CustomPipelineResult with current status
+        """
+        data = await self._make_request(
+            "GET",
+            f"/api/v1/custom_pipelines/{lookup_key}",
+        )
+
+        return CustomPipelineResult(
+            status=data.get("status", "processing"),
+            pipeline_id=data.get("pipeline_id"),
+            request_description=data.get("request_description"),
+            sent_at=data.get("sent_at"),
+            success=data.get("success"),
+            error_message=data.get("error_message"),
+            runtime=data.get("runtime"),
+            completed_at=data.get("completed_at"),
+        )
+
+    async def list_custom_pipelines(self) -> list[PipelineListItem]:
+        """
+        List all custom pipelines for the authenticated user's team.
+
+        Returns:
+            List of PipelineListItem objects ordered by creation date (newest first)
+        """
+        response = await self._make_request(
+            "GET",
+            "/api/v1/custom_pipelines",
+        )
+
+        return [
+            PipelineListItem(
+                pipeline_id=p["pipeline_id"],
+                request_description=p["request_description"],
+                status=p["status"],
+                created_at=p["created_at"],
+                name=p.get("name"),
+                success=p.get("success"),
+                completed_at=p.get("completed_at"),
+                error_message=p.get("error_message"),
+            )
+            for p in response.get("pipelines", [])
+        ]
+
+    async def delete_custom_pipeline(
+        self,
+        pipeline_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Delete (archive) a custom pipeline.
+
+        Args:
+            pipeline_id: The pipeline ID to delete (format: cp_XXXXX)
+
+        Returns:
+            Dictionary with success status and pipeline_id
+        """
+        response = await self._make_request(
+            "DELETE",
+            f"/api/v1/custom_pipelines/{pipeline_id}",
+        )
+
+        return {
+            "success": response.get("success", True),
+            "pipeline_id": response.get("pipeline_id", pipeline_id),
+        }
+
+    async def check_custom_pipeline_access(self) -> CustomPipelineAccessInfo:
+        """
+        Check if the current user's team has access to custom pipelines.
+
+        Returns:
+            CustomPipelineAccessInfo with has_access and can_create flags
+        """
+        response = await self._make_request(
+            "GET",
+            "/api/v1/custom_pipelines/access",
+        )
+
+        return CustomPipelineAccessInfo(
+            has_access=response.get("has_access", False),
+            can_create=response.get("can_create", False),
+        )
+
     async def _download_step_results(self, steps_data: dict) -> dict:
         """
         Download results from presigned URLs for each step
@@ -1315,4 +1508,94 @@ class DatalabClient:
         """
         return self._run_async(
             self._async_client.delete_workflow(workflow_id=workflow_id)
+        )
+
+    # Custom pipeline methods (sync)
+    def create_custom_pipeline(
+        self,
+        request_description: str,
+        file_paths: list[Union[str, Path]],
+        name: Optional[str] = None,
+        original_params: Optional[Dict[str, Any]] = None,
+        create_data_pipeline: bool = False,
+        customizer_session_id: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 2,
+    ) -> CustomPipelineResult:
+        """
+        Create a custom pipeline (sync version)
+
+        Args:
+            request_description: Natural language description of desired pipeline behavior
+            file_paths: List of paths to example documents (PDFs, images, etc.)
+            name: Optional short display name for the pipeline (max 120 chars)
+            original_params: Optional base ChandraParsePipeline parameters
+            create_data_pipeline: Whether to also create a data pipeline
+            customizer_session_id: Optional session ID for resuming customizer
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+
+        Returns:
+            CustomPipelineResult with pipeline_id on success
+        """
+        return self._run_async(
+            self._async_client.create_custom_pipeline(
+                request_description=request_description,
+                file_paths=file_paths,
+                name=name,
+                original_params=original_params,
+                create_data_pipeline=create_data_pipeline,
+                customizer_session_id=customizer_session_id,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def get_custom_pipeline_status(
+        self,
+        lookup_key: str,
+    ) -> CustomPipelineResult:
+        """
+        Check the status of a custom pipeline generation request (sync version)
+
+        Args:
+            lookup_key: The lookup key from the initial submission
+
+        Returns:
+            CustomPipelineResult with current status
+        """
+        return self._run_async(
+            self._async_client.get_custom_pipeline_status(lookup_key=lookup_key)
+        )
+
+    def list_custom_pipelines(self) -> list[PipelineListItem]:
+        """List all custom pipelines for your team (sync version)"""
+        return self._run_async(self._async_client.list_custom_pipelines())
+
+    def delete_custom_pipeline(
+        self,
+        pipeline_id: str,
+    ) -> Dict[str, Any]:
+        """
+        Delete (archive) a custom pipeline (sync version)
+
+        Args:
+            pipeline_id: The pipeline ID to delete (format: cp_XXXXX)
+
+        Returns:
+            Dictionary with success status and pipeline_id
+        """
+        return self._run_async(
+            self._async_client.delete_custom_pipeline(pipeline_id=pipeline_id)
+        )
+
+    def check_custom_pipeline_access(self) -> CustomPipelineAccessInfo:
+        """
+        Check if your team has access to custom pipelines (sync version)
+
+        Returns:
+            CustomPipelineAccessInfo with has_access and can_create flags
+        """
+        return self._run_async(
+            self._async_client.check_custom_pipeline_access()
         )
