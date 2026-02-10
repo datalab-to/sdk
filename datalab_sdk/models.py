@@ -51,10 +51,11 @@ class ConvertOptions(ProcessingOptions):
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
     # Comma-separated list of extra features: 'track_changes', 'chart_understanding',
-    # 'table_row_bboxes', 'extract_links', 'infographic', 'new_block_types'
+    # 'table_row_bboxes', 'extract_links', 'infographic', 'new_block_types', 'training_mode'
     extras: Optional[str] = None
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
+    token_efficient_markdown: bool = False  # generate token-efficient markdown optimized for LLM consumption
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
