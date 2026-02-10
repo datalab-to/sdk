@@ -46,7 +46,7 @@ class ConvertOptions(ProcessingOptions):
     page_schema: Optional[Dict[str, Any]] = None
     segmentation_schema: Optional[str] = None  # JSON string for document segmentation
     save_checkpoint: bool = False
-    output_format: str = "markdown"  # markdown, json, html, chunks
+    output_format: str = "markdown"  # markdown, json, html
     mode: str = "balanced"  # fast, balanced, accurate
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
