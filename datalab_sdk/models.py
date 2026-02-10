@@ -55,6 +55,7 @@ class ConvertOptions(ProcessingOptions):
     extras: Optional[str] = None
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
+    pipeline_id: Optional[str] = None  # custom pipeline ID to execute
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -368,6 +369,42 @@ class OCRResult:
                 f,
                 indent=2,
             )
+
+
+@dataclass
+class CustomPipelineResult:
+    """Result from a custom pipeline generation request"""
+
+    status: str  # "processing", "completed", or "failed"
+    pipeline_id: Optional[str] = None
+    request_description: Optional[str] = None
+    sent_at: Optional[str] = None
+    success: Optional[bool] = None
+    error_message: Optional[str] = None
+    runtime: Optional[float] = None
+    completed_at: Optional[str] = None
+
+
+@dataclass
+class PipelineListItem:
+    """Minimal pipeline information for list view"""
+
+    pipeline_id: str
+    request_description: str
+    status: str  # "processing", "completed", or "failed"
+    created_at: str
+    name: Optional[str] = None
+    success: Optional[bool] = None
+    completed_at: Optional[str] = None
+    error_message: Optional[str] = None
+
+
+@dataclass
+class CustomPipelineAccessInfo:
+    """Access information for custom pipelines"""
+
+    has_access: bool
+    can_create: bool = False
 
 
 @dataclass

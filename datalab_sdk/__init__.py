@@ -19,6 +19,9 @@ from .models import (
     WorkflowExecution,
     InputConfig,
     UploadedFileMetadata,
+    CustomPipelineResult,
+    PipelineListItem,
+    CustomPipelineAccessInfo,
 )
 from .settings import settings
 
@@ -40,4 +43,7 @@ __all__ = [
     "WorkflowExecution",
     "InputConfig",
     "UploadedFileMetadata",
+    "CustomPipelineResult",
+    "PipelineListItem",
+    "CustomPipelineAccessInfo",
 ]
