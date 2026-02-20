@@ -55,6 +55,7 @@ class ConvertOptions(ProcessingOptions):
     extras: Optional[str] = None
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
+    pipeline_id: Optional[str] = None
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
