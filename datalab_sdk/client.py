@@ -4,6 +4,7 @@ Datalab API client - async core with sync wrapper
 
 import asyncio
 import mimetypes
+import warnings
 import aiohttp
 from tenacity import (
     retry,
@@ -23,9 +24,14 @@ from datalab_sdk.exceptions import (
 from datalab_sdk.mimetypes import MIMETYPE_MAP
 from datalab_sdk.models import (
     ConversionResult,
+    CreateDocumentResult,
     OCRResult,
     ProcessingOptions,
     ConvertOptions,
+    ExtractOptions,
+    SegmentOptions,
+    CustomPipelineOptions,
+    TrackChangesOptions,
     OCROptions,
     FormFillingOptions,
     FormFillingResult,
@@ -216,7 +222,7 @@ class AsyncDatalabClient:
 
         return file_path.name, file_data, mime_type
 
-    def get_form_params(self, file_path=None, file_url=None, options=None):
+    def get_form_params(self, file_path=None, file_url=None, options=None, require_file=True):
         form_data = aiohttp.FormData()
 
         if file_url and file_path:
@@ -230,7 +236,7 @@ class AsyncDatalabClient:
             form_data.add_field(
                 "file", file_data, filename=filename, content_type=mime_type
             )
-        else:
+        elif require_file:
             raise ValueError("Either file_path or file_url must be provided")
 
         if options:
@@ -242,52 +248,11 @@ class AsyncDatalabClient:
 
         return form_data
 
-    # Convenient endpoint-specific methods
-    async def convert(
-        self,
-        file_path: Optional[Union[str, Path]] = None,
-        file_url: Optional[str] = None,
-        options: Optional[ConvertOptions] = None,
-        save_output: Optional[Union[str, Path]] = None,
-        max_polls: int = 300,
-        poll_interval: int = 1,
-    ) -> ConversionResult:
-        """
-        Convert a document using the marker endpoint
-
-        Args:
-            file_path: Path to the file to convert
-            file_url: URL of the file to convert
-            options: Processing options for conversion (use ConvertOptions.webhook_url
-                    to override the webhook URL stored in your account settings)
-            save_output: Optional path to save output files
-            max_polls: Maximum number of polling attempts
-            poll_interval: Seconds between polling attempts
-        """
-        if options is None:
-            options = ConvertOptions()
-
-        initial_data = await self._submit_with_retry(
-            "/api/v1/marker",
-            data=self.get_form_params(
-                file_path=file_path, file_url=file_url, options=options
-            ),
-        )
-
-        if not initial_data.get("success"):
-            raise DatalabAPIError(
-                f"Request failed: {initial_data.get('error', 'Unknown error')}"
-            )
-
-        result_data = await self._poll_result(
-            initial_data["request_check_url"],
-            max_polls=max_polls,
-            poll_interval=poll_interval,
-        )
-
-        result = ConversionResult(
+    def _build_conversion_result(self, result_data: Dict[str, Any], default_format: str = "markdown") -> ConversionResult:
+        """Build a ConversionResult from API response data"""
+        return ConversionResult(
             success=result_data.get("success", False),
-            output_format=result_data.get("output_format", options.output_format),
+            output_format=result_data.get("output_format", default_format),
             markdown=result_data.get("markdown"),
             html=result_data.get("html"),
             json=result_data.get("json"),
@@ -305,10 +270,323 @@ class AsyncDatalabClient:
             parse_quality_score=result_data.get("parse_quality_score"),
             runtime=result_data.get("runtime"),
             cost_breakdown=result_data.get("cost_breakdown"),
+            evaluation=result_data.get("evaluation"),
         )
+
+    async def _submit_and_poll(
+        self,
+        endpoint: str,
+        data: aiohttp.FormData,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Dict[str, Any]:
+        """Submit a request and poll for the result"""
+        initial_data = await self._submit_with_retry(endpoint, data=data)
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        return await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+    # Convenient endpoint-specific methods
+    async def convert(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[ConvertOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ConversionResult:
+        """
+        Convert a document to markdown, HTML, JSON, or chunks
+
+        Args:
+            file_path: Path to the file to convert
+            file_url: URL of the file to convert
+            options: Processing options for conversion
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        if options is None:
+            options = ConvertOptions()
+
+        result_data = await self._submit_and_poll(
+            "/api/v1/convert",
+            data=self.get_form_params(
+                file_path=file_path, file_url=file_url, options=options
+            ),
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        result = self._build_conversion_result(result_data, options.output_format)
 
         # Save output if requested
         if save_output and result.success:
+            output_path = Path(save_output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            result.save_output(output_path)
+
+        return result
+
+    async def extract(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[ExtractOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ConversionResult:
+        """
+        Extract structured data from a document using a JSON schema
+
+        Provide a file for end-to-end processing, or set checkpoint_id in options
+        (from a previous convert() call with save_checkpoint=True) to skip re-parsing.
+
+        Args:
+            file_path: Path to the file to extract from
+            file_url: URL of the file to extract from
+            options: Extraction options (must include page_schema)
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        if options is None:
+            raise ValueError("options must be provided with page_schema")
+
+        has_file = file_path is not None or file_url is not None
+        has_checkpoint = options.checkpoint_id is not None
+
+        if not has_file and not has_checkpoint:
+            raise ValueError("Either file_path/file_url or options.checkpoint_id must be provided")
+        if has_file and has_checkpoint:
+            raise ValueError("Provide either file_path/file_url or checkpoint_id, not both")
+
+        result_data = await self._submit_and_poll(
+            "/api/v1/extract",
+            data=self.get_form_params(
+                file_path=file_path, file_url=file_url, options=options, require_file=False
+            ),
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        result = self._build_conversion_result(result_data, options.output_format)
+
+        if save_output and result.success:
+            output_path = Path(save_output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            result.save_output(output_path)
+
+        return result
+
+    async def segment(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[SegmentOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ConversionResult:
+        """
+        Segment a document into sections using a schema
+
+        Returns page ranges for each identified segment. Provide a file for
+        end-to-end processing, or set checkpoint_id in options to skip re-parsing.
+
+        Args:
+            file_path: Path to the file to segment
+            file_url: URL of the file to segment
+            options: Segmentation options (must include segmentation_schema)
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        if options is None:
+            raise ValueError("options must be provided with segmentation_schema")
+
+        has_file = file_path is not None or file_url is not None
+        has_checkpoint = options.checkpoint_id is not None
+
+        if not has_file and not has_checkpoint:
+            raise ValueError("Either file_path/file_url or options.checkpoint_id must be provided")
+        if has_file and has_checkpoint:
+            raise ValueError("Provide either file_path/file_url or checkpoint_id, not both")
+
+        result_data = await self._submit_and_poll(
+            "/api/v1/segment",
+            data=self.get_form_params(
+                file_path=file_path, file_url=file_url, options=options, require_file=False
+            ),
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        result = self._build_conversion_result(result_data, "markdown")
+
+        if save_output and result.success:
+            output_path = Path(save_output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            result.save_output(output_path)
+
+        return result
+
+    async def run_custom_pipeline(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[CustomPipelineOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ConversionResult:
+        """
+        Execute a custom pipeline configuration
+
+        Args:
+            file_path: Path to the file to process
+            file_url: URL of the file to process
+            options: Custom pipeline options (must include pipeline_id)
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        if options is None:
+            raise ValueError("options must be provided with pipeline_id")
+
+        result_data = await self._submit_and_poll(
+            "/api/v1/custom-pipeline",
+            data=self.get_form_params(
+                file_path=file_path, file_url=file_url, options=options
+            ),
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        result = self._build_conversion_result(result_data, options.output_format)
+
+        if save_output and result.success:
+            output_path = Path(save_output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            result.save_output(output_path)
+
+        return result
+
+    async def track_changes(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[TrackChangesOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ConversionResult:
+        """
+        Extract and display tracked changes from DOCX documents
+
+        Args:
+            file_path: Path to the DOCX file
+            file_url: URL of the DOCX file
+            options: Track changes options
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        if options is None:
+            options = TrackChangesOptions()
+
+        result_data = await self._submit_and_poll(
+            "/api/v1/track-changes",
+            data=self.get_form_params(
+                file_path=file_path, file_url=file_url, options=options
+            ),
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        result = self._build_conversion_result(result_data, options.output_format)
+
+        if save_output and result.success:
+            output_path = Path(save_output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            result.save_output(output_path)
+
+        return result
+
+    async def create_document(
+        self,
+        markdown: str,
+        output_format: str = "docx",
+        webhook_url: Optional[str] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> CreateDocumentResult:
+        """
+        Create a DOCX document from markdown with track changes support
+
+        The input markdown can contain track changes markup:
+        - <ins> tags for insertions
+        - <del> tags for deletions
+        - <comment> tags for comments
+
+        Args:
+            markdown: The markdown content to convert to a document
+            output_format: Output format (currently only 'docx')
+            webhook_url: Optional webhook URL for completion notification
+            save_output: Optional path to save the output file
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        await self._ensure_session()
+
+        payload = {
+            "markdown": markdown,
+            "output_format": output_format,
+        }
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+
+        initial_data = await self._make_request(
+            "POST",
+            f"{self.base_url}/api/v1/create-document",
+            json=payload,
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        result = CreateDocumentResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            output_format=result_data.get("output_format"),
+            output_base64=result_data.get("output_base64"),
+            runtime=result_data.get("runtime"),
+            page_count=result_data.get("page_count"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            versions=result_data.get("versions"),
+        )
+
+        if save_output and result.success and result.output_base64:
             output_path = Path(save_output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             result.save_output(output_path)
@@ -323,7 +601,17 @@ class AsyncDatalabClient:
         max_polls: int = 300,
         poll_interval: int = 1,
     ) -> OCRResult:
-        """Perform OCR on a document"""
+        """Perform OCR on a document
+
+        .. deprecated::
+            The /ocr endpoint is deprecated. Use convert() instead.
+        """
+        warnings.warn(
+            "The ocr() method is deprecated and will be removed in a future version. "
+            "Use convert() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if options is None:
             options = OCROptions()
 
@@ -1058,7 +1346,7 @@ class DatalabClient:
         poll_interval: int = 1,
     ) -> ConversionResult:
         """
-        Convert a document using the marker endpoint (sync version)
+        Convert a document to markdown, HTML, JSON, or chunks (sync version)
 
         Args:
             file_path: Path to the file to convert
@@ -1079,6 +1367,161 @@ class DatalabClient:
             )
         )
 
+    def extract(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[ExtractOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ConversionResult:
+        """
+        Extract structured data from a document using a JSON schema (sync version)
+
+        Args:
+            file_path: Path to the file to extract from
+            file_url: URL of the file to extract from
+            options: Extraction options (must include page_schema)
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        return self._run_async(
+            self._async_client.extract(
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def segment(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[SegmentOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ConversionResult:
+        """
+        Segment a document into sections using a schema (sync version)
+
+        Args:
+            file_path: Path to the file to segment
+            file_url: URL of the file to segment
+            options: Segmentation options (must include segmentation_schema)
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        return self._run_async(
+            self._async_client.segment(
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def run_custom_pipeline(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[CustomPipelineOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ConversionResult:
+        """
+        Execute a custom pipeline configuration (sync version)
+
+        Args:
+            file_path: Path to the file to process
+            file_url: URL of the file to process
+            options: Custom pipeline options (must include pipeline_id)
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        return self._run_async(
+            self._async_client.run_custom_pipeline(
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def track_changes(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[TrackChangesOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ConversionResult:
+        """
+        Extract and display tracked changes from DOCX documents (sync version)
+
+        Args:
+            file_path: Path to the DOCX file
+            file_url: URL of the DOCX file
+            options: Track changes options
+            save_output: Optional path to save output files
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        return self._run_async(
+            self._async_client.track_changes(
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def create_document(
+        self,
+        markdown: str,
+        output_format: str = "docx",
+        webhook_url: Optional[str] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> CreateDocumentResult:
+        """
+        Create a DOCX document from markdown (sync version)
+
+        Args:
+            markdown: The markdown content to convert to a document
+            output_format: Output format (currently only 'docx')
+            webhook_url: Optional webhook URL for completion notification
+            save_output: Optional path to save the output file
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        return self._run_async(
+            self._async_client.create_document(
+                markdown=markdown,
+                output_format=output_format,
+                webhook_url=webhook_url,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
     def ocr(
         self,
         file_path: Union[str, Path],
@@ -1087,7 +1530,11 @@ class DatalabClient:
         max_polls: int = 300,
         poll_interval: int = 1,
     ) -> OCRResult:
-        """Perform OCR on a document (sync version)"""
+        """Perform OCR on a document (sync version)
+
+        .. deprecated::
+            The /ocr endpoint is deprecated. Use convert() instead.
+        """
         return self._run_async(
             self._async_client.ocr(
                 file_path=file_path,

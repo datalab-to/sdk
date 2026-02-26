@@ -16,6 +16,10 @@ from datalab_sdk.mimetypes import SUPPORTED_EXTENSIONS
 from datalab_sdk.models import (
     OCROptions,
     ConvertOptions,
+    ExtractOptions,
+    SegmentOptions,
+    CustomPipelineOptions,
+    TrackChangesOptions,
     ProcessingOptions,
     WorkflowStep,
     InputConfig,
@@ -60,7 +64,7 @@ def common_options(func):
 
 
 def marker_options(func):
-    """Options specific to marker/convert command"""
+    """Options specific to convert command"""
     func = click.option(
         "--format",
         "output_format",
@@ -80,16 +84,13 @@ def marker_options(func):
         help="Disable synthetic image captions/descriptions in output",
     )(func)
     func = click.option(
-        "--page_schema", help="Schema to set to do structured extraction"
-    )(func)
-    func = click.option(
         "--add_block_ids", is_flag=True, help="Add block IDs to HTML output"
     )(func)
     func = click.option(
         "--mode",
         type=click.Choice(["fast", "balanced", "accurate"]),
-        default="balanced",
-        help="OCR mode",
+        default="fast",
+        help="Processing mode",
     )(func)
     return func
 
@@ -125,22 +126,14 @@ async def process_files_async(
 
     async def call_api(client, file_path, output_path):
         """Make API call - client handles retries for rate limits"""
-        if method == "convert":
-            return await client.convert(
-                file_path,
-                options=options,
-                save_output=output_path,
-                max_polls=max_polls,
-                poll_interval=poll_interval,
-            )
-        else:  # method == 'ocr'
-            return await client.ocr(
-                file_path,
-                options=options,
-                save_output=output_path,
-                max_polls=max_polls,
-                poll_interval=poll_interval,
-            )
+        api_method = getattr(client, method)
+        return await api_method(
+            file_path,
+            options=options,
+            save_output=output_path,
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
 
     async def process_single_file(file_path: Path) -> dict:
         async with semaphore:
@@ -260,9 +253,18 @@ def process_documents(
     paginate: bool = False,
     disable_image_extraction: bool = False,
     disable_image_captions: bool = False,
-    page_schema: Optional[str] = None,
     add_block_ids: bool = False,
-    mode: str = "balanced",
+    mode: str = "fast",
+    # Extract-specific
+    page_schema: Optional[str] = None,
+    checkpoint_id: Optional[str] = None,
+    # Segment-specific
+    segmentation_schema: Optional[str] = None,
+    # Custom pipeline-specific
+    pipeline_id: Optional[str] = None,
+    run_eval: bool = False,
+    # Options object override
+    options_override: Optional[ProcessingOptions] = None,
 ):
     """Unified document processing function"""
     try:
@@ -278,7 +280,7 @@ def process_documents(
         if base_url is None:
             base_url = settings.DATALAB_HOST
 
-        output_dir = setup_output_directory(output_dir)
+        output_dir_path = setup_output_directory(output_dir)
         file_extensions = parse_extensions(extensions)
 
         # Get files to process
@@ -292,18 +294,56 @@ def process_documents(
         click.echo(f"Found {len(to_process)} files to process")
 
         # Create processing options based on method
-        if method == "convert":
+        if options_override:
+            options = options_override
+        elif method == "convert":
             options = ConvertOptions(
-                output_format=output_format,
+                output_format=output_format or "markdown",
                 max_pages=max_pages,
                 paginate=paginate,
                 disable_image_extraction=disable_image_extraction,
                 disable_image_captions=disable_image_captions,
                 page_range=page_range,
                 skip_cache=skip_cache,
-                page_schema=page_schema,
                 add_block_ids=add_block_ids,
                 mode=mode,
+            )
+        elif method == "extract":
+            options = ExtractOptions(
+                page_schema=page_schema or "",
+                checkpoint_id=checkpoint_id,
+                mode=mode,
+                output_format=output_format or "markdown",
+                max_pages=max_pages,
+                page_range=page_range,
+                skip_cache=skip_cache,
+            )
+        elif method == "segment":
+            options = SegmentOptions(
+                segmentation_schema=segmentation_schema or "",
+                checkpoint_id=checkpoint_id,
+                mode=mode,
+                max_pages=max_pages,
+                page_range=page_range,
+                skip_cache=skip_cache,
+            )
+        elif method == "run_custom_pipeline":
+            options = CustomPipelineOptions(
+                pipeline_id=pipeline_id or "",
+                run_eval=run_eval,
+                mode=mode,
+                output_format=output_format or "markdown",
+                max_pages=max_pages,
+                page_range=page_range,
+                skip_cache=skip_cache,
+            )
+        elif method == "track_changes":
+            options = TrackChangesOptions(
+                output_format=output_format or "markdown,html,chunks",
+                paginate=paginate,
+                max_pages=max_pages,
+                page_range=page_range,
+                skip_cache=skip_cache,
             )
         else:  # method == "ocr"
             options = OCROptions(
@@ -315,7 +355,7 @@ def process_documents(
         results = asyncio.run(
             process_files_async(
                 to_process,
-                output_dir,
+                output_dir_path,
                 method,
                 options=options,
                 max_concurrent=max_concurrent,
@@ -327,8 +367,16 @@ def process_documents(
         )
 
         # Show results
-        operation = "Conversion" if method == "convert" else "OCR"
-        show_results(results, operation, output_dir)
+        operation_names = {
+            "convert": "Conversion",
+            "extract": "Extraction",
+            "segment": "Segmentation",
+            "run_custom_pipeline": "Custom Pipeline",
+            "track_changes": "Track Changes",
+            "ocr": "OCR",
+        }
+        operation = operation_names.get(method, method.title())
+        show_results(results, operation, output_dir_path)
 
     except DatalabError as e:
         click.echo(f"Error: {e}", err=True)
@@ -361,7 +409,6 @@ def convert(
     paginate: bool,
     disable_image_extraction: bool,
     disable_image_captions: bool,
-    page_schema: Optional[str],
     add_block_ids: bool,
     mode: str,
 ):
@@ -383,10 +430,225 @@ def convert(
         paginate=paginate,
         disable_image_extraction=disable_image_extraction,
         disable_image_captions=disable_image_captions,
-        page_schema=page_schema,
         add_block_ids=add_block_ids,
         mode=mode,
     )
+
+
+@click.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--page_schema", required=True, help="JSON schema for structured extraction (must contain 'properties' key)")
+@click.option("--checkpoint_id", help="Checkpoint ID from a previous convert (skips re-parsing)")
+@click.option("--format", "output_format", default="markdown", type=click.Choice(["markdown", "html", "json", "chunks"]), help="Output format")
+@click.option("--mode", type=click.Choice(["fast", "balanced", "accurate"]), default="fast", help="Processing mode")
+@common_options
+def extract(
+    path: str,
+    page_schema: str,
+    checkpoint_id: Optional[str],
+    output_format: str,
+    mode: str,
+    api_key: str,
+    output_dir: str,
+    max_pages: Optional[int],
+    extensions: Optional[str],
+    max_concurrent: int,
+    base_url: str,
+    page_range: Optional[str],
+    skip_cache: bool,
+    max_polls: int,
+    poll_interval: int,
+):
+    """Extract structured data from documents using a JSON schema"""
+    process_documents(
+        path=path,
+        method="extract",
+        api_key=api_key,
+        output_dir=output_dir,
+        max_pages=max_pages,
+        extensions=extensions,
+        max_concurrent=max_concurrent,
+        base_url=base_url,
+        page_range=page_range,
+        skip_cache=skip_cache,
+        max_polls=max_polls,
+        poll_interval=poll_interval,
+        output_format=output_format,
+        mode=mode,
+        page_schema=page_schema,
+        checkpoint_id=checkpoint_id,
+    )
+
+
+@click.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--segmentation_schema", required=True, help="JSON schema with segment names and descriptions")
+@click.option("--checkpoint_id", help="Checkpoint ID from a previous convert (skips re-parsing)")
+@click.option("--mode", type=click.Choice(["fast", "balanced", "accurate"]), default="fast", help="Processing mode")
+@common_options
+def segment(
+    path: str,
+    segmentation_schema: str,
+    checkpoint_id: Optional[str],
+    mode: str,
+    api_key: str,
+    output_dir: str,
+    max_pages: Optional[int],
+    extensions: Optional[str],
+    max_concurrent: int,
+    base_url: str,
+    page_range: Optional[str],
+    skip_cache: bool,
+    max_polls: int,
+    poll_interval: int,
+):
+    """Segment documents into sections using a schema"""
+    process_documents(
+        path=path,
+        method="segment",
+        api_key=api_key,
+        output_dir=output_dir,
+        max_pages=max_pages,
+        extensions=extensions,
+        max_concurrent=max_concurrent,
+        base_url=base_url,
+        page_range=page_range,
+        skip_cache=skip_cache,
+        max_polls=max_polls,
+        poll_interval=poll_interval,
+        mode=mode,
+        segmentation_schema=segmentation_schema,
+        checkpoint_id=checkpoint_id,
+    )
+
+
+@click.command("custom-pipeline")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--pipeline_id", required=True, help="Custom pipeline ID to execute (cp_XXXXX format)")
+@click.option("--run_eval", is_flag=True, help="Run evaluation rules for this pipeline")
+@click.option("--format", "output_format", default="markdown", type=click.Choice(["markdown", "html", "json", "chunks"]), help="Output format")
+@click.option("--mode", type=click.Choice(["fast", "balanced", "accurate"]), default="fast", help="Processing mode")
+@common_options
+def custom_pipeline(
+    path: str,
+    pipeline_id: str,
+    run_eval: bool,
+    output_format: str,
+    mode: str,
+    api_key: str,
+    output_dir: str,
+    max_pages: Optional[int],
+    extensions: Optional[str],
+    max_concurrent: int,
+    base_url: str,
+    page_range: Optional[str],
+    skip_cache: bool,
+    max_polls: int,
+    poll_interval: int,
+):
+    """Run a custom pipeline on documents"""
+    process_documents(
+        path=path,
+        method="run_custom_pipeline",
+        api_key=api_key,
+        output_dir=output_dir,
+        max_pages=max_pages,
+        extensions=extensions,
+        max_concurrent=max_concurrent,
+        base_url=base_url,
+        page_range=page_range,
+        skip_cache=skip_cache,
+        max_polls=max_polls,
+        poll_interval=poll_interval,
+        output_format=output_format,
+        mode=mode,
+        pipeline_id=pipeline_id,
+        run_eval=run_eval,
+    )
+
+
+@click.command("track-changes")
+@click.argument("path", type=click.Path(exists=True))
+@click.option("--format", "output_format", default="markdown,html,chunks", help="Comma-separated output formats (markdown, html, chunks)")
+@click.option("--paginate", is_flag=True, help="Separate output by page")
+@common_options
+def track_changes(
+    path: str,
+    output_format: str,
+    paginate: bool,
+    api_key: str,
+    output_dir: str,
+    max_pages: Optional[int],
+    extensions: Optional[str],
+    max_concurrent: int,
+    base_url: str,
+    page_range: Optional[str],
+    skip_cache: bool,
+    max_polls: int,
+    poll_interval: int,
+):
+    """Extract tracked changes from DOCX documents"""
+    process_documents(
+        path=path,
+        method="track_changes",
+        api_key=api_key,
+        output_dir=output_dir,
+        max_pages=max_pages,
+        extensions=extensions,
+        max_concurrent=max_concurrent,
+        base_url=base_url,
+        page_range=page_range,
+        skip_cache=skip_cache,
+        max_polls=max_polls,
+        poll_interval=poll_interval,
+        output_format=output_format,
+        paginate=paginate,
+    )
+
+
+@click.command("create-document")
+@click.option("--markdown", "markdown_input", required=True, help="Markdown content or path to markdown file")
+@click.option("--output", "-o", "output_path", required=True, type=click.Path(), help="Output file path for the DOCX")
+@click.option("--api_key", required=False, help="Datalab API key")
+@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+def create_document(
+    markdown_input: str,
+    output_path: str,
+    api_key: Optional[str],
+    base_url: str,
+):
+    """Create a DOCX document from markdown"""
+    try:
+        if api_key is None:
+            api_key = settings.DATALAB_API_KEY
+
+        if api_key is None:
+            raise DatalabError(
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+            )
+
+        # Check if markdown_input is a file path
+        md_path = Path(markdown_input)
+        if md_path.exists() and md_path.is_file():
+            markdown_content = md_path.read_text(encoding="utf-8")
+        else:
+            markdown_content = markdown_input
+
+        client = DatalabClient(api_key=api_key, base_url=base_url)
+        result = client.create_document(
+            markdown=markdown_content,
+            save_output=output_path,
+        )
+
+        if result.success:
+            click.echo(f"Document created successfully: {Path(output_path).with_suffix('.docx')}")
+        else:
+            click.echo(f"Document creation failed: {result.error}", err=True)
+            sys.exit(1)
+
+    except DatalabError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
 
 
 # Workflow commands
@@ -869,6 +1131,11 @@ def _render_dag_simple(layers, children, step_map):
 
 # Add commands to CLI group
 cli.add_command(convert)
+cli.add_command(extract)
+cli.add_command(segment)
+cli.add_command(custom_pipeline)
+cli.add_command(track_changes)
+cli.add_command(create_document)
 cli.add_command(create_workflow)
 cli.add_command(get_workflow)
 cli.add_command(get_step_types)
