@@ -46,6 +46,8 @@ class ConvertOptions(ProcessingOptions):
     output_format: str = "markdown"  # markdown, json, html, chunks (comma-separated for multiple)
     mode: str = "fast"  # fast, balanced, accurate
     keep_spreadsheet_formatting: bool = False
+    keep_pageheader_in_output: bool = False  # keep page headers in the output
+    keep_pagefooter_in_output: bool = False  # keep page footers in the output
     webhook_url: Optional[str] = None
     # Comma-separated list of extra features: 'track_changes', 'chart_understanding',
     # 'table_row_bboxes', 'extract_links', 'infographic', 'new_block_types'
@@ -59,14 +61,19 @@ class ConvertOptions(ProcessingOptions):
         # Start with parent's form data
         form_data = super().to_form_data()
 
-        # Remove keep_spreadsheet_formatting from top-level (it goes in additional_config)
-        form_data.pop("keep_spreadsheet_formatting", None)
+        # These options go into additional_config, not top-level form fields
+        for key in ("keep_spreadsheet_formatting", "keep_pageheader_in_output", "keep_pagefooter_in_output"):
+            form_data.pop(key, None)
 
         additional_config_dict = {}
         if self.additional_config:
             additional_config_dict.update(self.additional_config)
         if self.keep_spreadsheet_formatting:
             additional_config_dict["keep_spreadsheet_formatting"] = True
+        if self.keep_pageheader_in_output:
+            additional_config_dict["keep_pageheader_in_output"] = True
+        if self.keep_pagefooter_in_output:
+            additional_config_dict["keep_pagefooter_in_output"] = True
 
         if additional_config_dict:
             form_data["additional_config"] = (None, json.dumps(additional_config_dict))
@@ -498,3 +505,16 @@ class CreateDocumentResult:
 
         with open(output_path, "wb") as f:
             f.write(base64.b64decode(self.output_base64))
+
+
+@dataclass
+class GenerateSchemasResult:
+    """Result from extraction schema generation (/marker/extraction/gen_schemas endpoint)"""
+
+    status: str
+    success: Optional[bool] = None
+    error: Optional[str] = None
+    # Nested dict with keys: simple_schema, moderate_schema, complex_schema (each a JSON string or None)
+    suggestions: Optional[Dict[str, Optional[str]]] = None
+    page_count: Optional[int] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None

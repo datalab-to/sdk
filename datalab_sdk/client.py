@@ -25,6 +25,7 @@ from datalab_sdk.mimetypes import MIMETYPE_MAP
 from datalab_sdk.models import (
     ConversionResult,
     CreateDocumentResult,
+    GenerateSchemasResult,
     OCRResult,
     ProcessingOptions,
     ConvertOptions,
@@ -714,6 +715,58 @@ class AsyncDatalabClient:
             result.save_output(output_path)
 
         return result
+
+    async def generate_extraction_schemas(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> GenerateSchemasResult:
+        """
+        Generate extraction schema suggestions from a document checkpoint.
+
+        Use this after convert() with save_checkpoint=True to get AI-suggested
+        schemas for structured data extraction.
+
+        Args:
+            checkpoint_id: Checkpoint ID from a previous convert() call with save_checkpoint=True
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+
+        Returns:
+            GenerateSchemasResult with schema suggestions (simple_schema, moderate_schema,
+            complex_schema), each being a JSON string or None
+        """
+        payload: Dict[str, Any] = {"checkpoint_id": checkpoint_id}
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+
+        initial_data = await self._submit_with_retry(
+            "/api/v1/marker/extraction/gen_schemas",
+            json=payload,
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        return GenerateSchemasResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            suggestions=result_data.get("suggestions"),
+            page_count=result_data.get("page_count"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+        )
 
     # Workflow methods
     async def create_workflow(
@@ -1573,6 +1626,38 @@ class DatalabClient:
                 file_url=file_url,
                 options=options,
                 save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def generate_extraction_schemas(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> GenerateSchemasResult:
+        """
+        Generate extraction schema suggestions from a document checkpoint (sync version).
+
+        Use this after convert() with save_checkpoint=True to get AI-suggested
+        schemas for structured data extraction.
+
+        Args:
+            checkpoint_id: Checkpoint ID from a previous convert() call with save_checkpoint=True
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+
+        Returns:
+            GenerateSchemasResult with schema suggestions (simple_schema, moderate_schema,
+            complex_schema), each being a JSON string or None
+        """
+        return self._run_async(
+            self._async_client.generate_extraction_schemas(
+                checkpoint_id=checkpoint_id,
+                webhook_url=webhook_url,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
