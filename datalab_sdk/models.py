@@ -35,19 +35,16 @@ class ProcessingOptions:
 
 @dataclass
 class ConvertOptions(ProcessingOptions):
-    """Options for marker conversion"""
+    """Options for document conversion via /convert endpoint"""
 
-    # Marker specific options
     paginate: bool = False
     disable_image_extraction: bool = False
     disable_image_captions: bool = False
     fence_synthetic_captions: bool = False
     additional_config: Optional[Dict[str, Any]] = None
-    page_schema: Optional[Dict[str, Any]] = None
-    segmentation_schema: Optional[str] = None  # JSON string for document segmentation
     save_checkpoint: bool = False
-    output_format: str = "markdown"  # markdown, json, html, chunks
-    mode: str = "balanced"  # fast, balanced, accurate
+    output_format: str = "markdown"  # markdown, json, html, chunks (comma-separated for multiple)
+    mode: str = "fast"  # fast, balanced, accurate
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
     # Comma-separated list of extra features: 'track_changes', 'chart_understanding',
@@ -55,7 +52,7 @@ class ConvertOptions(ProcessingOptions):
     extras: Optional[str] = None
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
-    pipeline_id: Optional[str] = None
+    token_efficient_markdown: bool = False  # optimize markdown for LLM token usage
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -75,6 +72,49 @@ class ConvertOptions(ProcessingOptions):
             form_data["additional_config"] = (None, json.dumps(additional_config_dict))
 
         return form_data
+
+
+@dataclass
+class ExtractOptions(ProcessingOptions):
+    """Options for structured data extraction via /extract endpoint"""
+
+    page_schema: str = ""  # Required - JSON schema with 'properties' key
+    checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
+    mode: str = "fast"  # fast, balanced, accurate
+    output_format: str = "markdown"  # markdown, json, html, chunks
+    save_checkpoint: bool = False
+    webhook_url: Optional[str] = None
+
+
+@dataclass
+class SegmentOptions(ProcessingOptions):
+    """Options for document segmentation via /segment endpoint"""
+
+    segmentation_schema: str = ""  # Required - JSON schema with segment names/descriptions
+    checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
+    mode: str = "fast"  # fast, balanced, accurate
+    save_checkpoint: bool = False
+    webhook_url: Optional[str] = None
+
+
+@dataclass
+class CustomPipelineOptions(ProcessingOptions):
+    """Options for running a custom pipeline via /custom-pipeline endpoint"""
+
+    pipeline_id: str = ""  # Required - custom pipeline ID (cp_XXXXX format)
+    run_eval: bool = False  # Run evaluation rules defined for the pipeline
+    mode: str = "fast"  # fast, balanced, accurate
+    output_format: str = "markdown"  # markdown, json, html, chunks
+    webhook_url: Optional[str] = None
+
+
+@dataclass
+class TrackChangesOptions(ProcessingOptions):
+    """Options for extracting tracked changes from DOCX via /track-changes endpoint"""
+
+    output_format: str = "markdown,html,chunks"  # comma-separated
+    paginate: bool = False
+    webhook_url: Optional[str] = None
 
 
 @dataclass
@@ -110,7 +150,7 @@ class FormFillingOptions(ProcessingOptions):
 
 @dataclass
 class ConversionResult:
-    """Result from document conversion (marker endpoint)"""
+    """Result from document conversion"""
 
     success: bool
     output_format: str
@@ -131,6 +171,7 @@ class ConversionResult:
     parse_quality_score: Optional[float] = None
     runtime: Optional[float] = None
     cost_breakdown: Optional[Dict[str, Any]] = None
+    evaluation: Optional[Dict[str, Any]] = None  # Evaluation results when run_eval=true
 
     def save_output(
         self, output_path: Union[str, Path], save_images: bool = True
@@ -430,3 +471,30 @@ class FormFillingResult:
             output_path.with_suffix(".metadata.json"), "w", encoding="utf-8"
         ) as f:
             json.dump(metadata, f, indent=2)
+
+
+@dataclass
+class CreateDocumentResult:
+    """Result from document creation (/create-document endpoint)"""
+
+    status: str
+    success: Optional[bool] = None
+    error: Optional[str] = None
+    output_format: Optional[str] = None  # "docx"
+    output_base64: Optional[str] = None  # Base64-encoded document
+    runtime: Optional[float] = None
+    page_count: Optional[int] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
+    versions: Optional[Union[Dict[str, Any], str]] = None
+
+    def save_output(self, output_path: Union[str, Path]) -> None:
+        """Save the created document to a file"""
+        output_path = Path(output_path)
+
+        if not self.output_base64:
+            raise ValueError("No output data available to save")
+
+        output_path = output_path.with_suffix(".docx")
+
+        with open(output_path, "wb") as f:
+            f.write(base64.b64decode(self.output_base64))
