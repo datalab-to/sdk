@@ -140,9 +140,14 @@ class AsyncDatalabClient:
         wait=wait_exponential_jitter(initial=5, max=120),
         reraise=True,
     )
-    async def _submit_with_retry(self, endpoint: str, data) -> Dict[str, Any]:
+    async def _submit_with_retry(self, endpoint: str, data=None, json=None) -> Dict[str, Any]:
         """POST submission with retry for rate limits (429)"""
-        return await self._make_request("POST", endpoint, data=data)
+        kwargs = {}
+        if data is not None:
+            kwargs["data"] = data
+        if json is not None:
+            kwargs["json"] = json
+        return await self._make_request("POST", endpoint, **kwargs)
 
     async def _poll_result(
         self, check_url: str, max_polls: int = 300, poll_interval: int = 1
@@ -548,8 +553,6 @@ class AsyncDatalabClient:
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
-        await self._ensure_session()
-
         payload = {
             "markdown": markdown,
             "output_format": output_format,
@@ -557,9 +560,8 @@ class AsyncDatalabClient:
         if webhook_url:
             payload["webhook_url"] = webhook_url
 
-        initial_data = await self._make_request(
-            "POST",
-            f"{self.base_url}/api/v1/create-document",
+        initial_data = await self._submit_with_retry(
+            "/api/v1/create-document",
             json=payload,
         )
 

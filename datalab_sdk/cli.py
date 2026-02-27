@@ -127,6 +127,19 @@ async def process_files_async(
     async def call_api(client, file_path, output_path):
         """Make API call - client handles retries for rate limits"""
         api_method = getattr(client, method)
+        # For extract/segment with checkpoint_id, don't pass file_path
+        has_checkpoint = (
+            options is not None
+            and hasattr(options, "checkpoint_id")
+            and options.checkpoint_id is not None
+        )
+        if has_checkpoint:
+            return await api_method(
+                options=options,
+                save_output=output_path,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
         return await api_method(
             file_path,
             options=options,
