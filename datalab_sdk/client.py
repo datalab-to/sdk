@@ -25,6 +25,7 @@ from datalab_sdk.mimetypes import MIMETYPE_MAP
 from datalab_sdk.models import (
     ConversionResult,
     CreateDocumentResult,
+    GenerateSchemaResult,
     OCRResult,
     ProcessingOptions,
     ConvertOptions,
@@ -715,11 +716,67 @@ class AsyncDatalabClient:
 
         return result
 
+    async def generate_extraction_schemas(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> GenerateSchemaResult:
+        """
+        Generate suggested extraction schemas from a document checkpoint
+
+        Analyzes the document and returns suggested JSON schemas at three complexity
+        levels (simple, moderate, complex) that can be used with the extract() method.
+
+        Requires a checkpoint_id from a previous convert() call with save_checkpoint=True.
+
+        Args:
+            checkpoint_id: Checkpoint ID from a previous convert() call (save_checkpoint=True)
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+
+        Returns:
+            GenerateSchemaResult with simple_schema, moderate_schema, and complex_schema suggestions
+        """
+        payload: Dict[str, Any] = {"checkpoint_id": checkpoint_id}
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+
+        initial_data = await self._submit_with_retry(
+            "/api/v1/marker/extraction/gen_schemas",
+            json=payload,
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        suggestions = result_data.get("suggestions") or {}
+        return GenerateSchemaResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            simple_schema=suggestions.get("simple_schema"),
+            moderate_schema=suggestions.get("moderate_schema"),
+            complex_schema=suggestions.get("complex_schema"),
+            page_count=result_data.get("page_count"),
+        )
+
     # Workflow methods
     async def create_workflow(
         self,
         name: str,
         steps: list[WorkflowStep],
+        team_id: Optional[int] = None,
     ) -> Workflow:
         """
         Create a new workflow
@@ -727,6 +784,7 @@ class AsyncDatalabClient:
         Args:
             name: Name of the workflow
             steps: List of workflow steps
+            team_id: Ignored; team is determined from the API key (kept for backward compatibility)
 
         Returns:
             Workflow object with ID and metadata
@@ -882,21 +940,21 @@ class AsyncDatalabClient:
     async def execute_workflow(
         self,
         workflow_id: int,
-        input_config: InputConfig,
+        input_config: Optional[InputConfig] = None,
     ) -> WorkflowExecution:
         """
         Trigger a workflow execution
 
         Args:
             workflow_id: ID of the workflow to execute
-            input_config: Input configuration for the workflow
+            input_config: Optional input configuration for the workflow
 
         Returns:
             WorkflowExecution object with initial status (typically "processing")
             Use get_execution_status() to check completion status
         """
         execution_data = {
-            "input_config": input_config.to_dict(),
+            "input_config": input_config.to_dict() if input_config is not None else None,
         }
 
         response = await self._make_request(
@@ -1578,13 +1636,48 @@ class DatalabClient:
             )
         )
 
+    def generate_extraction_schemas(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> GenerateSchemaResult:
+        """
+        Generate suggested extraction schemas from a document checkpoint (sync version)
+
+        Args:
+            checkpoint_id: Checkpoint ID from a previous convert() call (save_checkpoint=True)
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+
+        Returns:
+            GenerateSchemaResult with simple_schema, moderate_schema, and complex_schema suggestions
+        """
+        return self._run_async(
+            self._async_client.generate_extraction_schemas(
+                checkpoint_id=checkpoint_id,
+                webhook_url=webhook_url,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
     # Workflow methods (sync)
     def create_workflow(
         self,
         name: str,
         steps: list[WorkflowStep],
+        team_id: Optional[int] = None,
     ) -> Workflow:
-        """Create a new workflow (sync version)"""
+        """Create a new workflow (sync version)
+
+        Args:
+            name: Name of the workflow
+            steps: List of workflow steps
+            team_id: Ignored; team is determined from the API key (kept for backward compatibility)
+        """
         return self._run_async(
             self._async_client.create_workflow(
                 name=name,
@@ -1607,7 +1700,7 @@ class DatalabClient:
     def execute_workflow(
         self,
         workflow_id: int,
-        input_config: InputConfig,
+        input_config: Optional[InputConfig] = None,
     ) -> WorkflowExecution:
         """Execute a workflow (sync version)"""
         return self._run_async(
