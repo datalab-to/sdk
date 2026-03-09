@@ -41,7 +41,7 @@ class ConvertOptions(ProcessingOptions):
     disable_image_extraction: bool = False
     disable_image_captions: bool = False
     fence_synthetic_captions: bool = False
-    additional_config: Optional[Dict[str, Any]] = None
+    additional_config: Optional[Dict[str, Any]] = None  # Supported keys: 'keep_spreadsheet_formatting', 'keep_pageheader_in_output', 'keep_pagefooter_in_output'
     save_checkpoint: bool = False
     output_format: str = "markdown"  # markdown, json, html, chunks (comma-separated for multiple)
     mode: str = "fast"  # fast, balanced, accurate
@@ -471,6 +471,19 @@ class FormFillingResult:
             output_path.with_suffix(".metadata.json"), "w", encoding="utf-8"
         ) as f:
             json.dump(metadata, f, indent=2)
+
+
+@dataclass
+class GenerateSchemaResult:
+    """Result from extraction schema generation"""
+
+    status: str
+    success: Optional[bool] = None
+    error: Optional[str] = None
+    simple_schema: Optional[str] = None  # Basic single-field schema
+    moderate_schema: Optional[str] = None  # Multi-field schema
+    complex_schema: Optional[str] = None  # Comprehensive nested schema
+    page_count: Optional[int] = None
 
 
 @dataclass
