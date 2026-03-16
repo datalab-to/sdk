@@ -102,9 +102,15 @@ class CustomPipelineOptions(ProcessingOptions):
     """Options for running a custom pipeline via /custom-pipeline endpoint"""
 
     pipeline_id: str = ""  # Required - custom pipeline ID (cp_XXXXX format)
+    version: Optional[int] = None  # Specific pipeline version; defaults to active version
     run_eval: bool = False  # Run evaluation rules defined for the pipeline
     mode: str = "fast"  # fast, balanced, accurate
     output_format: str = "markdown"  # markdown, json, html, chunks
+    paginate: bool = False  # Separate output by page with horizontal rules
+    add_block_ids: bool = False  # Add data-block-id attributes to HTML elements
+    include_markdown_in_chunks: bool = False  # Include markdown field in chunks/JSON output
+    disable_image_extraction: bool = False  # Disable image extraction from the document
+    disable_image_captions: bool = False  # Disable synthetic image captions in output
     webhook_url: Optional[str] = None
 
 
