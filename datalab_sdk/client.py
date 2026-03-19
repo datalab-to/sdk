@@ -50,6 +50,21 @@ from datalab_sdk.models import (
 from datalab_sdk.settings import settings
 
 
+class _AsyncIterableReader:
+    """Adapts an async iterable of bytes into an async file-like object for ijson."""
+
+    def __init__(self, async_iterable):
+        self._iter = async_iterable.__aiter__()
+
+    async def read(self, n=-1):
+        if n == 0:
+            return b""
+        try:
+            return await self._iter.__anext__()
+        except StopAsyncIteration:
+            return b""
+
+
 class AsyncDatalabClient:
     """Asynchronous client for Datalab API"""
 
@@ -278,9 +293,10 @@ class AsyncDatalabClient:
                 success = None
                 error = None
 
-                async for prefix, event, value in ijson.parse_async(
+                tee_reader = _AsyncIterableReader(
                     self._tee_stream_to_file(resp.content, fd)
-                ):
+                )
+                async for prefix, event, value in ijson.parse_async(tee_reader):
                     if prefix == "status" and event == "string":
                         status = value
                     elif prefix == "success" and event == "boolean":
