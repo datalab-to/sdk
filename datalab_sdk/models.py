@@ -498,3 +498,14 @@ class CreateDocumentResult:
 
         with open(output_path, "wb") as f:
             f.write(base64.b64decode(self.output_base64))
+
+
+@dataclass
+class FileResult:
+    """Lightweight result returned when stream_response_to is used.
+    The full JSON response is written directly to disk at output_path,
+    never fully loaded into memory."""
+    success: bool
+    status: str
+    output_path: Path
+    error: Optional[str] = None
