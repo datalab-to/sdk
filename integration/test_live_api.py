@@ -13,7 +13,7 @@ import json
 import pytest
 import os
 from pathlib import Path
-from datalab_sdk import DatalabClient, AsyncDatalabClient
+from datalab_sdk import DatalabClient, AsyncDatalabClient, FileResult
 from datalab_sdk.models import ConversionResult, OCRResult, ConvertOptions, OCROptions
 from datalab_sdk.exceptions import DatalabError
 
@@ -271,3 +271,104 @@ class TestSaveOutput:
         saved_json = json.loads((output_path.with_suffix(".ocr.json")).read_text())
         assert saved_json["success"] is True
         assert len(saved_json["pages"]) == len(result.pages)
+
+
+class TestStreamResponseTo:
+    """Test stream_response_to functionality with live API"""
+
+    def test_convert_stream_to_disk(self, tmp_path):
+        """Test that convert streams JSON response to disk and returns FileResult"""
+        client = DatalabClient()
+        pdf_file = DATA_DIR / "adversarial.pdf"
+        output_file = tmp_path / "result.json"
+
+        options = ConvertOptions(max_pages=1)
+        result = client.convert(
+            pdf_file, options=options, stream_response_to=output_file
+        )
+
+        assert isinstance(result, FileResult)
+        assert result.success is True
+        assert result.status == "complete"
+        assert result.output_path == output_file
+        assert not result.error
+
+        # Verify the file exists and contains valid JSON
+        assert output_file.exists()
+        data = json.loads(output_file.read_text())
+        assert data["status"] == "complete"
+        assert data["success"] is True
+        assert "markdown" in data
+
+    def test_convert_normal_path_unchanged(self):
+        """Test that convert without stream_response_to still returns ConversionResult"""
+        client = DatalabClient()
+        pdf_file = DATA_DIR / "adversarial.pdf"
+
+        options = ConvertOptions(max_pages=1)
+        result = client.convert(pdf_file, options=options)
+
+        assert isinstance(result, ConversionResult)
+        assert result.success is True
+        assert result.markdown is not None
+
+    def test_save_output_and_stream_response_to_mutually_exclusive(self):
+        """Test that using both save_output and stream_response_to raises ValueError"""
+        client = DatalabClient()
+        pdf_file = DATA_DIR / "adversarial.pdf"
+
+        with pytest.raises(ValueError, match="Cannot use both"):
+            client.convert(
+                pdf_file,
+                save_output="/tmp/out",
+                stream_response_to="/tmp/stream.json",
+            )
+
+    def test_stream_response_to_invalid_directory(self):
+        """Test that a non-existent parent directory raises ValueError"""
+        client = DatalabClient()
+        pdf_file = DATA_DIR / "adversarial.pdf"
+
+        with pytest.raises(ValueError, match="Directory does not exist"):
+            client.convert(
+                pdf_file,
+                stream_response_to="/nonexistent/dir/result.json",
+            )
+
+    @pytest.mark.asyncio
+    async def test_convert_stream_async(self, tmp_path):
+        """Test async convert with stream_response_to"""
+        async with AsyncDatalabClient() as client:
+            pdf_file = DATA_DIR / "adversarial.pdf"
+            output_file = tmp_path / "async_result.json"
+
+            options = ConvertOptions(max_pages=1)
+            result = await client.convert(
+                pdf_file, options=options, stream_response_to=output_file
+            )
+
+            assert isinstance(result, FileResult)
+            assert result.success is True
+            assert result.status == "complete"
+            assert output_file.exists()
+
+            data = json.loads(output_file.read_text())
+            assert data["status"] == "complete"
+
+    def test_convert_stream_html_format(self, tmp_path):
+        """Test streaming with HTML output format"""
+        client = DatalabClient()
+        pdf_file = DATA_DIR / "adversarial.pdf"
+        output_file = tmp_path / "result.json"
+
+        options = ConvertOptions(output_format="html", max_pages=1)
+        result = client.convert(
+            pdf_file, options=options, stream_response_to=output_file
+        )
+
+        assert isinstance(result, FileResult)
+        assert result.success is True
+        assert output_file.exists()
+
+        data = json.loads(output_file.read_text())
+        assert "html" in data

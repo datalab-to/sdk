@@ -10,6 +10,7 @@ from .exceptions import DatalabError, DatalabAPIError, DatalabTimeoutError
 from .models import (
     ConversionResult,
     CreateDocumentResult,
+    FileResult,
     OCRResult,
     ConvertOptions,
     ExtractOptions,
@@ -36,6 +37,7 @@ __all__ = [
     "DatalabTimeoutError",
     "ConversionResult",
     "CreateDocumentResult",
+    "FileResult",
     "OCRResult",
     "ConvertOptions",
     "ExtractOptions",
