@@ -4,8 +4,13 @@ Datalab API client - async core with sync wrapper
 
 import asyncio
 import mimetypes
+import os
+import shutil
+import tempfile
 import warnings
+
 import aiohttp
+import ijson
 from tenacity import (
     retry,
     retry_if_exception,
@@ -25,6 +30,7 @@ from datalab_sdk.mimetypes import MIMETYPE_MAP
 from datalab_sdk.models import (
     ConversionResult,
     CreateDocumentResult,
+    FileResult,
     OCRResult,
     ProcessingOptions,
     ConvertOptions,
@@ -42,6 +48,21 @@ from datalab_sdk.models import (
     UploadedFileMetadata,
 )
 from datalab_sdk.settings import settings
+
+
+class _AsyncIterableReader:
+    """Adapts an async iterable of bytes into an async file-like object for ijson."""
+
+    def __init__(self, async_iterable):
+        self._iter = async_iterable.__aiter__()
+
+    async def read(self, n=-1):
+        if n == 0:
+            return b""
+        try:
+            return await self._iter.__anext__()
+        except StopAsyncIteration:
+            return b""
 
 
 class AsyncDatalabClient:
@@ -150,8 +171,12 @@ class AsyncDatalabClient:
         return await self._make_request("POST", endpoint, **kwargs)
 
     async def _poll_result(
-        self, check_url: str, max_polls: int = 300, poll_interval: int = 1
-    ) -> Dict[str, Any]:
+        self,
+        check_url: str,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+        stream_response_to: Optional[Path] = None,
+    ) -> Union[Dict[str, Any], FileResult]:
         """Poll for result completion"""
         full_url = (
             check_url
@@ -160,14 +185,21 @@ class AsyncDatalabClient:
         )
 
         for i in range(max_polls):
-            data = await self._poll_get_with_retry(full_url)
+            if stream_response_to:
+                result = await self._poll_get_streaming(full_url, stream_response_to)
+                status, success, error = result.status, result.success, result.error
+            else:
+                data = await self._poll_get_with_retry(full_url)
+                status = data.get("status")
+                success = data.get("success", True)
+                error = data.get("error")
 
-            if data.get("status") == "complete":
-                return data
+            if status == "complete":
+                return result if stream_response_to else data
 
-            if not data.get("success", True) and not data.get("status") == "processing":
+            if not success and status != "processing":
                 raise DatalabAPIError(
-                    f"Processing failed: {data.get('error', 'Unknown error')}"
+                    f"Processing failed: {error or 'Unknown error'}"
                 )
 
             await asyncio.sleep(poll_interval)
@@ -201,6 +233,116 @@ class AsyncDatalabClient:
     async def _poll_get_with_retry(self, url: str) -> Dict[str, Any]:
         """GET wrapper for polling with scoped retries for transient failures"""
         return await self._make_request("GET", url)
+
+    @staticmethod
+    async def _tee_stream_to_file(content, fd):
+        """Async generator that writes each chunk to fd and yields it for ijson."""
+        async for chunk in content.iter_any():
+            os.write(fd, chunk)
+            yield chunk
+
+    @retry(
+        retry=(
+            retry_if_exception_type(DatalabTimeoutError)
+            | retry_if_exception(
+                lambda e: isinstance(e, DatalabAPIError)
+                and (
+                    getattr(e, "status_code", None) in (408, 429)
+                    or (
+                        getattr(e, "status_code", None) is not None
+                        and getattr(e, "status_code") >= 500
+                    )
+                    or getattr(e, "status_code", None) is None
+                )
+            )
+        ),
+        stop=stop_after_attempt(10),
+        wait=wait_exponential_jitter(initial=5, max=120),
+        reraise=True,
+    )
+    async def _poll_get_streaming(self, url: str, stream_response_to: Path) -> FileResult:
+        """GET with streaming to disk. Extracts status/success/error via ijson."""
+        await self._ensure_session()
+
+        fd = None
+        tmp_path = None
+        try:
+            fd, tmp_path = tempfile.mkstemp()
+
+            try:
+                resp = await self._session.get(url)
+            except asyncio.TimeoutError:
+                raise DatalabTimeoutError(f"Request timed out after {self.timeout} seconds")
+            except aiohttp.ClientError as e:
+                raise DatalabAPIError(f"Request failed: {str(e)}")
+
+            try:
+                if resp.status >= 400:
+                    body = await resp.read()
+                    try:
+                        import json as _json
+                        error_data = _json.loads(body)
+                        error_message = (
+                            error_data.get("detail") or error_data.get("error") or str(resp.status)
+                        )
+                    except Exception:
+                        error_message = f"HTTP {resp.status}"
+                    raise DatalabAPIError(error_message, resp.status)
+
+                status = None
+                success = None
+                error = None
+
+                tee_reader = _AsyncIterableReader(
+                    self._tee_stream_to_file(resp.content, fd)
+                )
+                async for prefix, event, value in ijson.parse_async(tee_reader):
+                    if prefix == "status" and event == "string":
+                        status = value
+                    elif prefix == "success" and event == "boolean":
+                        success = value
+                    elif prefix == "error" and event in ("string", "null"):
+                        error = value
+            finally:
+                resp.release()
+
+            if status is None:
+                raise DatalabAPIError("Response missing 'status' field")
+
+            if success is None:
+                success = True
+
+            # Close fd before moving
+            os.close(fd)
+            fd = None
+
+            if status == "complete":
+                shutil.move(tmp_path, stream_response_to)
+                tmp_path = None
+                return FileResult(
+                    success=success,
+                    status=status,
+                    output_path=stream_response_to,
+                    error=error,
+                )
+            else:
+                return FileResult(
+                    success=success,
+                    status=status,
+                    output_path=stream_response_to,
+                    error=error,
+                )
+        finally:
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError:
+                    pass
+            if tmp_path is not None:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
 
     def _prepare_file_data(self, file_path: Union[str, Path]) -> tuple:
         """Prepare file data for upload"""
@@ -284,7 +426,8 @@ class AsyncDatalabClient:
         data: aiohttp.FormData,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> Dict[str, Any]:
+        stream_response_to: Optional[Path] = None,
+    ) -> Union[Dict[str, Any], FileResult]:
         """Submit a request and poll for the result"""
         initial_data = await self._submit_with_retry(endpoint, data=data)
 
@@ -297,6 +440,7 @@ class AsyncDatalabClient:
             initial_data["request_check_url"],
             max_polls=max_polls,
             poll_interval=poll_interval,
+            stream_response_to=stream_response_to,
         )
 
     # Convenient endpoint-specific methods
@@ -306,9 +450,10 @@ class AsyncDatalabClient:
         file_url: Optional[str] = None,
         options: Optional[ConvertOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> ConversionResult:
+    ) -> Union[ConversionResult, FileResult]:
         """
         Convert a document to markdown, HTML, JSON, or chunks
 
@@ -317,9 +462,19 @@ class AsyncDatalabClient:
             file_url: URL of the file to convert
             options: Processing options for conversion
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
+        if save_output and stream_response_to:
+            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
+
+        resolved_stream_response_to = None
+        if stream_response_to:
+            resolved_stream_response_to = Path(stream_response_to)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+
         if options is None:
             options = ConvertOptions()
 
@@ -330,7 +485,11 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
         )
+
+        if isinstance(result_data, FileResult):
+            return result_data
 
         result = self._build_conversion_result(result_data, options.output_format)
 
@@ -348,9 +507,10 @@ class AsyncDatalabClient:
         file_url: Optional[str] = None,
         options: Optional[ExtractOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> ConversionResult:
+    ) -> Union[ConversionResult, FileResult]:
         """
         Extract structured data from a document using a JSON schema
 
@@ -362,9 +522,19 @@ class AsyncDatalabClient:
             file_url: URL of the file to extract from
             options: Extraction options (must include page_schema)
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
+        if save_output and stream_response_to:
+            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
+
+        resolved_stream_response_to = None
+        if stream_response_to:
+            resolved_stream_response_to = Path(stream_response_to)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+
         if options is None:
             raise ValueError("options must be provided with page_schema")
 
@@ -383,7 +553,11 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
         )
+
+        if isinstance(result_data, FileResult):
+            return result_data
 
         result = self._build_conversion_result(result_data, options.output_format)
 
@@ -400,9 +574,10 @@ class AsyncDatalabClient:
         file_url: Optional[str] = None,
         options: Optional[SegmentOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> ConversionResult:
+    ) -> Union[ConversionResult, FileResult]:
         """
         Segment a document into sections using a schema
 
@@ -414,9 +589,19 @@ class AsyncDatalabClient:
             file_url: URL of the file to segment
             options: Segmentation options (must include segmentation_schema)
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
+        if save_output and stream_response_to:
+            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
+
+        resolved_stream_response_to = None
+        if stream_response_to:
+            resolved_stream_response_to = Path(stream_response_to)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+
         if options is None:
             raise ValueError("options must be provided with segmentation_schema")
 
@@ -435,7 +620,11 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
         )
+
+        if isinstance(result_data, FileResult):
+            return result_data
 
         result = self._build_conversion_result(result_data, "markdown")
 
@@ -452,9 +641,10 @@ class AsyncDatalabClient:
         file_url: Optional[str] = None,
         options: Optional[CustomPipelineOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> ConversionResult:
+    ) -> Union[ConversionResult, FileResult]:
         """
         Execute a custom pipeline configuration
 
@@ -463,9 +653,19 @@ class AsyncDatalabClient:
             file_url: URL of the file to process
             options: Custom pipeline options (must include pipeline_id)
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
+        if save_output and stream_response_to:
+            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
+
+        resolved_stream_response_to = None
+        if stream_response_to:
+            resolved_stream_response_to = Path(stream_response_to)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+
         if options is None:
             raise ValueError("options must be provided with pipeline_id")
 
@@ -476,7 +676,11 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
         )
+
+        if isinstance(result_data, FileResult):
+            return result_data
 
         result = self._build_conversion_result(result_data, options.output_format)
 
@@ -493,9 +697,10 @@ class AsyncDatalabClient:
         file_url: Optional[str] = None,
         options: Optional[TrackChangesOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> ConversionResult:
+    ) -> Union[ConversionResult, FileResult]:
         """
         Extract and display tracked changes from DOCX documents
 
@@ -504,9 +709,19 @@ class AsyncDatalabClient:
             file_url: URL of the DOCX file
             options: Track changes options
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
+        if save_output and stream_response_to:
+            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
+
+        resolved_stream_response_to = None
+        if stream_response_to:
+            resolved_stream_response_to = Path(stream_response_to)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+
         if options is None:
             options = TrackChangesOptions()
 
@@ -517,7 +732,11 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
         )
+
+        if isinstance(result_data, FileResult):
+            return result_data
 
         result = self._build_conversion_result(result_data, options.output_format)
 
@@ -534,9 +753,10 @@ class AsyncDatalabClient:
         output_format: str = "docx",
         webhook_url: Optional[str] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> CreateDocumentResult:
+    ) -> Union[CreateDocumentResult, FileResult]:
         """
         Create a DOCX document from markdown with track changes support
 
@@ -550,9 +770,19 @@ class AsyncDatalabClient:
             output_format: Output format (currently only 'docx')
             webhook_url: Optional webhook URL for completion notification
             save_output: Optional path to save the output file
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
+        if save_output and stream_response_to:
+            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
+
+        resolved_stream_response_to = None
+        if stream_response_to:
+            resolved_stream_response_to = Path(stream_response_to)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+
         payload = {
             "markdown": markdown,
             "output_format": output_format,
@@ -574,7 +804,11 @@ class AsyncDatalabClient:
             initial_data["request_check_url"],
             max_polls=max_polls,
             poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
         )
+
+        if isinstance(result_data, FileResult):
+            return result_data
 
         result = CreateDocumentResult(
             status=result_data.get("status", "complete"),
@@ -600,14 +834,24 @@ class AsyncDatalabClient:
         file_path: Union[str, Path],
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> OCRResult:
+    ) -> Union[OCRResult, FileResult]:
         """Perform OCR on a document
 
         .. deprecated::
             The /ocr endpoint is deprecated. Use convert() instead.
         """
+        if save_output and stream_response_to:
+            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
+
+        resolved_stream_response_to = None
+        if stream_response_to:
+            resolved_stream_response_to = Path(stream_response_to)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+
         warnings.warn(
             "The ocr() method is deprecated and will be removed in a future version. "
             "Use convert() instead.",
@@ -631,7 +875,11 @@ class AsyncDatalabClient:
             initial_data["request_check_url"],
             max_polls=max_polls,
             poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
         )
+
+        if isinstance(result_data, FileResult):
+            return result_data
 
         result = OCRResult(
             success=result_data.get("success", False),
@@ -657,9 +905,10 @@ class AsyncDatalabClient:
         file_url: Optional[str] = None,
         options: Optional[FormFillingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> FormFillingResult:
+    ) -> Union[FormFillingResult, FileResult]:
         """
         Fill PDF or image forms with provided field data
 
@@ -668,9 +917,19 @@ class AsyncDatalabClient:
             file_url: URL of the file to fill
             options: Form filling options (must include field_data)
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
+        if save_output and stream_response_to:
+            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
+
+        resolved_stream_response_to = None
+        if stream_response_to:
+            resolved_stream_response_to = Path(stream_response_to)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+
         if options is None:
             raise ValueError("options must be provided with field_data")
 
@@ -690,7 +949,11 @@ class AsyncDatalabClient:
             initial_data["request_check_url"],
             max_polls=max_polls,
             poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
         )
+
+        if isinstance(result_data, FileResult):
+            return result_data
 
         result = FormFillingResult(
             status=result_data.get("status", "complete"),
@@ -1344,9 +1607,10 @@ class DatalabClient:
         file_url: Optional[str] = None,
         options: Optional[ConvertOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> ConversionResult:
+    ) -> Union[ConversionResult, FileResult]:
         """
         Convert a document to markdown, HTML, JSON, or chunks (sync version)
 
@@ -1355,6 +1619,7 @@ class DatalabClient:
             file_url: URL of the file to convert
             options: Processing options for conversion
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
@@ -1364,6 +1629,7 @@ class DatalabClient:
                 file_url=file_url,
                 options=options,
                 save_output=save_output,
+                stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
@@ -1375,9 +1641,10 @@ class DatalabClient:
         file_url: Optional[str] = None,
         options: Optional[ExtractOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> ConversionResult:
+    ) -> Union[ConversionResult, FileResult]:
         """
         Extract structured data from a document using a JSON schema (sync version)
 
@@ -1386,6 +1653,7 @@ class DatalabClient:
             file_url: URL of the file to extract from
             options: Extraction options (must include page_schema)
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
@@ -1395,6 +1663,7 @@ class DatalabClient:
                 file_url=file_url,
                 options=options,
                 save_output=save_output,
+                stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
@@ -1406,9 +1675,10 @@ class DatalabClient:
         file_url: Optional[str] = None,
         options: Optional[SegmentOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> ConversionResult:
+    ) -> Union[ConversionResult, FileResult]:
         """
         Segment a document into sections using a schema (sync version)
 
@@ -1417,6 +1687,7 @@ class DatalabClient:
             file_url: URL of the file to segment
             options: Segmentation options (must include segmentation_schema)
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
@@ -1426,6 +1697,7 @@ class DatalabClient:
                 file_url=file_url,
                 options=options,
                 save_output=save_output,
+                stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
@@ -1437,9 +1709,10 @@ class DatalabClient:
         file_url: Optional[str] = None,
         options: Optional[CustomPipelineOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> ConversionResult:
+    ) -> Union[ConversionResult, FileResult]:
         """
         Execute a custom pipeline configuration (sync version)
 
@@ -1448,6 +1721,7 @@ class DatalabClient:
             file_url: URL of the file to process
             options: Custom pipeline options (must include pipeline_id)
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
@@ -1457,6 +1731,7 @@ class DatalabClient:
                 file_url=file_url,
                 options=options,
                 save_output=save_output,
+                stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
@@ -1468,9 +1743,10 @@ class DatalabClient:
         file_url: Optional[str] = None,
         options: Optional[TrackChangesOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> ConversionResult:
+    ) -> Union[ConversionResult, FileResult]:
         """
         Extract and display tracked changes from DOCX documents (sync version)
 
@@ -1479,6 +1755,7 @@ class DatalabClient:
             file_url: URL of the DOCX file
             options: Track changes options
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
@@ -1488,6 +1765,7 @@ class DatalabClient:
                 file_url=file_url,
                 options=options,
                 save_output=save_output,
+                stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
@@ -1499,9 +1777,10 @@ class DatalabClient:
         output_format: str = "docx",
         webhook_url: Optional[str] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> CreateDocumentResult:
+    ) -> Union[CreateDocumentResult, FileResult]:
         """
         Create a DOCX document from markdown (sync version)
 
@@ -1510,6 +1789,7 @@ class DatalabClient:
             output_format: Output format (currently only 'docx')
             webhook_url: Optional webhook URL for completion notification
             save_output: Optional path to save the output file
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
@@ -1519,6 +1799,7 @@ class DatalabClient:
                 output_format=output_format,
                 webhook_url=webhook_url,
                 save_output=save_output,
+                stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
@@ -1529,9 +1810,10 @@ class DatalabClient:
         file_path: Union[str, Path],
         options: Optional[ProcessingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> OCRResult:
+    ) -> Union[OCRResult, FileResult]:
         """Perform OCR on a document (sync version)
 
         .. deprecated::
@@ -1542,6 +1824,7 @@ class DatalabClient:
                 file_path=file_path,
                 options=options,
                 save_output=save_output,
+                stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
@@ -1553,9 +1836,10 @@ class DatalabClient:
         file_url: Optional[str] = None,
         options: Optional[FormFillingOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
-    ) -> FormFillingResult:
+    ) -> Union[FormFillingResult, FileResult]:
         """
         Fill PDF or image forms with provided field data (sync version)
 
@@ -1564,6 +1848,7 @@ class DatalabClient:
             file_url: URL of the file to fill
             options: Form filling options (must include field_data)
             save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
@@ -1573,6 +1858,7 @@ class DatalabClient:
                 file_url=file_url,
                 options=options,
                 save_output=save_output,
+                stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
