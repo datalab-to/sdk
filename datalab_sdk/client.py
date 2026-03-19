@@ -456,7 +456,8 @@ class AsyncDatalabClient:
         resolved_stream_response_to = None
         if stream_response_to:
             resolved_stream_response_to = Path(stream_response_to)
-            resolved_stream_response_to.parent.mkdir(parents=True, exist_ok=True)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
 
         if options is None:
             options = ConvertOptions()
@@ -515,7 +516,8 @@ class AsyncDatalabClient:
         resolved_stream_response_to = None
         if stream_response_to:
             resolved_stream_response_to = Path(stream_response_to)
-            resolved_stream_response_to.parent.mkdir(parents=True, exist_ok=True)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
 
         if options is None:
             raise ValueError("options must be provided with page_schema")
@@ -581,7 +583,8 @@ class AsyncDatalabClient:
         resolved_stream_response_to = None
         if stream_response_to:
             resolved_stream_response_to = Path(stream_response_to)
-            resolved_stream_response_to.parent.mkdir(parents=True, exist_ok=True)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
 
         if options is None:
             raise ValueError("options must be provided with segmentation_schema")
@@ -644,7 +647,8 @@ class AsyncDatalabClient:
         resolved_stream_response_to = None
         if stream_response_to:
             resolved_stream_response_to = Path(stream_response_to)
-            resolved_stream_response_to.parent.mkdir(parents=True, exist_ok=True)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
 
         if options is None:
             raise ValueError("options must be provided with pipeline_id")
@@ -699,7 +703,8 @@ class AsyncDatalabClient:
         resolved_stream_response_to = None
         if stream_response_to:
             resolved_stream_response_to = Path(stream_response_to)
-            resolved_stream_response_to.parent.mkdir(parents=True, exist_ok=True)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
 
         if options is None:
             options = TrackChangesOptions()
@@ -759,7 +764,8 @@ class AsyncDatalabClient:
         resolved_stream_response_to = None
         if stream_response_to:
             resolved_stream_response_to = Path(stream_response_to)
-            resolved_stream_response_to.parent.mkdir(parents=True, exist_ok=True)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
 
         payload = {
             "markdown": markdown,
@@ -827,7 +833,8 @@ class AsyncDatalabClient:
         resolved_stream_response_to = None
         if stream_response_to:
             resolved_stream_response_to = Path(stream_response_to)
-            resolved_stream_response_to.parent.mkdir(parents=True, exist_ok=True)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
 
         warnings.warn(
             "The ocr() method is deprecated and will be removed in a future version. "
@@ -904,7 +911,8 @@ class AsyncDatalabClient:
         resolved_stream_response_to = None
         if stream_response_to:
             resolved_stream_response_to = Path(stream_response_to)
-            resolved_stream_response_to.parent.mkdir(parents=True, exist_ok=True)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
 
         if options is None:
             raise ValueError("options must be provided with field_data")
