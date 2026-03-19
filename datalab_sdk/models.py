@@ -46,6 +46,8 @@ class ConvertOptions(ProcessingOptions):
     output_format: str = "markdown"  # markdown, json, html, chunks (comma-separated for multiple)
     mode: str = "fast"  # fast, balanced, accurate
     keep_spreadsheet_formatting: bool = False
+    keep_pageheader_in_output: bool = False  # keep page headers in output
+    keep_pagefooter_in_output: bool = False  # keep page footers in output
     webhook_url: Optional[str] = None
     # Comma-separated list of extra features: 'track_changes', 'chart_understanding',
     # 'table_row_bboxes', 'extract_links', 'infographic', 'new_block_types'
@@ -59,14 +61,20 @@ class ConvertOptions(ProcessingOptions):
         # Start with parent's form data
         form_data = super().to_form_data()
 
-        # Remove keep_spreadsheet_formatting from top-level (it goes in additional_config)
+        # Remove these from top-level (they go in additional_config)
         form_data.pop("keep_spreadsheet_formatting", None)
+        form_data.pop("keep_pageheader_in_output", None)
+        form_data.pop("keep_pagefooter_in_output", None)
 
         additional_config_dict = {}
         if self.additional_config:
             additional_config_dict.update(self.additional_config)
         if self.keep_spreadsheet_formatting:
             additional_config_dict["keep_spreadsheet_formatting"] = True
+        if self.keep_pageheader_in_output:
+            additional_config_dict["keep_pageheader_in_output"] = True
+        if self.keep_pagefooter_in_output:
+            additional_config_dict["keep_pagefooter_in_output"] = True
 
         if additional_config_dict:
             form_data["additional_config"] = (None, json.dumps(additional_config_dict))
@@ -324,6 +332,7 @@ class WorkflowExecution:
     error: Optional[str] = None
     created: Optional[str] = None
     updated: Optional[str] = None
+    external_workflow_id: Optional[str] = None  # Temporal workflow ID
 
     def save_output(self, output_path: Union[str, Path]) -> None:
         """Save the execution steps to a JSON file"""
@@ -339,6 +348,7 @@ class WorkflowExecution:
             "error": self.error,
             "created": self.created,
             "updated": self.updated,
+            "external_workflow_id": self.external_workflow_id,
         }
 
         with open(output_path.with_suffix(".json"), "w", encoding="utf-8") as f:
