@@ -102,9 +102,15 @@ class CustomPipelineOptions(ProcessingOptions):
     """Options for running a custom pipeline via /custom-pipeline endpoint"""
 
     pipeline_id: str = ""  # Required - custom pipeline ID (cp_XXXXX format)
+    version: Optional[int] = None  # Optional pipeline version number; uses active version if None
     run_eval: bool = False  # Run evaluation rules defined for the pipeline
     mode: str = "fast"  # fast, balanced, accurate
     output_format: str = "markdown"  # markdown, json, html, chunks
+    paginate: bool = False  # Add page delimiters to output
+    add_block_ids: bool = False  # Add block IDs to HTML elements
+    include_markdown_in_chunks: bool = False  # Include markdown field in chunks/JSON output
+    disable_image_extraction: bool = False  # Disable image extraction from PDF
+    disable_image_captions: bool = False  # Disable synthetic image captions
     webhook_url: Optional[str] = None
 
 
@@ -508,4 +514,13 @@ class FileResult:
     success: bool
     status: str
     output_path: Path
+    error: Optional[str] = None
+
+
+@dataclass
+class ThumbnailResult:
+    """Result from getting document thumbnails"""
+
+    success: bool
+    thumbnails: Optional[List[str]] = None  # Base64-encoded JPG images, one per page
     error: Optional[str] = None

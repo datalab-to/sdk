@@ -41,6 +41,7 @@ from datalab_sdk.models import (
     OCROptions,
     FormFillingOptions,
     FormFillingResult,
+    ThumbnailResult,
     Workflow,
     WorkflowStep,
     WorkflowExecution,
@@ -1567,6 +1568,30 @@ class AsyncDatalabClient:
             "message": response.get("message", f"File {file_id} deleted successfully"),
         }
 
+    async def get_thumbnails(
+        self,
+        lookup_key: str,
+    ) -> "ThumbnailResult":
+        """
+        Get page thumbnails for a processed document
+
+        Args:
+            lookup_key: The request ID or checkpoint ID of a previously processed document
+
+        Returns:
+            ThumbnailResult with a list of base64-encoded JPG thumbnail images
+        """
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/thumbnails/{lookup_key}",
+        )
+
+        return ThumbnailResult(
+            success=response.get("success", True),
+            thumbnails=response.get("thumbnails"),
+            error=response.get("error"),
+        )
+
 
 class DatalabClient:
     """Synchronous wrapper around AsyncDatalabClient"""
@@ -2051,3 +2076,18 @@ class DatalabClient:
         return self._run_async(
             self._async_client.delete_workflow(workflow_id=workflow_id)
         )
+
+    def get_thumbnails(
+        self,
+        lookup_key: str,
+    ) -> "ThumbnailResult":
+        """
+        Get page thumbnails for a processed document (sync version)
+
+        Args:
+            lookup_key: The request ID or checkpoint ID of a previously processed document
+
+        Returns:
+            ThumbnailResult with a list of base64-encoded JPG thumbnail images
+        """
+        return self._run_async(self._async_client.get_thumbnails(lookup_key=lookup_key))

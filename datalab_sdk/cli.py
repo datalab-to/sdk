@@ -3,6 +3,7 @@
 Datalab SDK Command Line Interface
 """
 
+import base64
 import os
 import sys
 import asyncio
@@ -21,6 +22,7 @@ from datalab_sdk.models import (
     CustomPipelineOptions,
     TrackChangesOptions,
     ProcessingOptions,
+    ThumbnailResult,
     WorkflowStep,
     InputConfig,
 )
@@ -275,6 +277,7 @@ def process_documents(
     segmentation_schema: Optional[str] = None,
     # Custom pipeline-specific
     pipeline_id: Optional[str] = None,
+    version: Optional[int] = None,
     run_eval: bool = False,
     # Options object override
     options_override: Optional[ProcessingOptions] = None,
@@ -343,6 +346,7 @@ def process_documents(
         elif method == "run_custom_pipeline":
             options = CustomPipelineOptions(
                 pipeline_id=pipeline_id or "",
+                version=version,
                 run_eval=run_eval,
                 mode=mode,
                 output_format=output_format or "markdown",
@@ -538,6 +542,7 @@ def segment(
 @click.command("custom-pipeline")
 @click.argument("path", type=click.Path(exists=True))
 @click.option("--pipeline_id", required=True, help="Custom pipeline ID to execute (cp_XXXXX format)")
+@click.option("--version", type=int, default=None, help="Pipeline version number to use (default: active version)")
 @click.option("--run_eval", is_flag=True, help="Run evaluation rules for this pipeline")
 @click.option("--format", "output_format", default="markdown", type=click.Choice(["markdown", "html", "json", "chunks"]), help="Output format")
 @click.option("--mode", type=click.Choice(["fast", "balanced", "accurate"]), default="fast", help="Processing mode")
@@ -545,6 +550,7 @@ def segment(
 def custom_pipeline(
     path: str,
     pipeline_id: str,
+    version: Optional[int],
     run_eval: bool,
     output_format: str,
     mode: str,
@@ -576,6 +582,7 @@ def custom_pipeline(
         output_format=output_format,
         mode=mode,
         pipeline_id=pipeline_id,
+        version=version,
         run_eval=run_eval,
     )
 
@@ -662,6 +669,45 @@ def create_document(
     except DatalabError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
+
+@click.command("get-thumbnails")
+@click.argument("lookup_key")
+@click.option("--output_dir", "-o", required=False, type=click.Path(), help="Directory to save thumbnail images")
+@click.option("--api_key", required=False, help="Datalab API key")
+@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+def get_thumbnails(
+    lookup_key: str,
+    output_dir: Optional[str],
+    api_key: Optional[str],
+    base_url: str,
+):
+    """Get page thumbnails for a previously processed document"""
+    if api_key is None:
+        api_key = settings.DATALAB_API_KEY
+    if api_key is None:
+        raise click.ClickException("You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable.")
+
+    client = DatalabClient(api_key=api_key, base_url=base_url)
+    result = client.get_thumbnails(lookup_key=lookup_key)
+
+    if not result.success:
+        click.echo(f"Error: {result.error}", err=True)
+        sys.exit(1)
+
+    thumbnails = result.thumbnails or []
+    click.echo(f"Retrieved {len(thumbnails)} thumbnail(s)")
+
+    if output_dir and thumbnails:
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        for i, thumb_b64 in enumerate(thumbnails):
+            img_data = base64.b64decode(thumb_b64)
+            img_path = output_path / f"page_{i + 1}.jpg"
+            img_path.write_bytes(img_data)
+            click.echo(f"  Saved: {img_path}")
+    elif thumbnails:
+        click.echo(f"Use --output_dir to save thumbnails to disk")
 
 
 # Workflow commands
@@ -1149,6 +1195,7 @@ cli.add_command(segment)
 cli.add_command(custom_pipeline)
 cli.add_command(track_changes)
 cli.add_command(create_document)
+cli.add_command(get_thumbnails)
 cli.add_command(create_workflow)
 cli.add_command(get_workflow)
 cli.add_command(get_step_types)
