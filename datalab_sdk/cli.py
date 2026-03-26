@@ -276,6 +276,9 @@ def process_documents(
     # Custom pipeline-specific
     pipeline_id: Optional[str] = None,
     run_eval: bool = False,
+    pipeline_version: Optional[int] = None,
+    # Extract-specific flags
+    include_scores: bool = False,
     # Options object override
     options_override: Optional[ProcessingOptions] = None,
 ):
@@ -330,6 +333,7 @@ def process_documents(
                 max_pages=max_pages,
                 page_range=page_range,
                 skip_cache=skip_cache,
+                include_scores=include_scores,
             )
         elif method == "segment":
             options = SegmentOptions(
@@ -344,6 +348,7 @@ def process_documents(
             options = CustomPipelineOptions(
                 pipeline_id=pipeline_id or "",
                 run_eval=run_eval,
+                version=pipeline_version,
                 mode=mode,
                 output_format=output_format or "markdown",
                 max_pages=max_pages,
@@ -454,6 +459,7 @@ def convert(
 @click.option("--checkpoint_id", help="Checkpoint ID from a previous convert (skips re-parsing)")
 @click.option("--format", "output_format", default="markdown", type=click.Choice(["markdown", "html", "json", "chunks"]), help="Output format")
 @click.option("--mode", type=click.Choice(["fast", "balanced", "accurate"]), default="fast", help="Processing mode")
+@click.option("--include_scores", is_flag=True, help="Include confidence scores (1-5) for each extracted field")
 @common_options
 def extract(
     path: str,
@@ -461,6 +467,7 @@ def extract(
     checkpoint_id: Optional[str],
     output_format: str,
     mode: str,
+    include_scores: bool,
     api_key: str,
     output_dir: str,
     max_pages: Optional[int],
@@ -490,6 +497,7 @@ def extract(
         mode=mode,
         page_schema=page_schema,
         checkpoint_id=checkpoint_id,
+        include_scores=include_scores,
     )
 
 
@@ -539,6 +547,7 @@ def segment(
 @click.argument("path", type=click.Path(exists=True))
 @click.option("--pipeline_id", required=True, help="Custom pipeline ID to execute (cp_XXXXX format)")
 @click.option("--run_eval", is_flag=True, help="Run evaluation rules for this pipeline")
+@click.option("--version", "pipeline_version", type=int, default=None, help="Pipeline version number (defaults to active version)")
 @click.option("--format", "output_format", default="markdown", type=click.Choice(["markdown", "html", "json", "chunks"]), help="Output format")
 @click.option("--mode", type=click.Choice(["fast", "balanced", "accurate"]), default="fast", help="Processing mode")
 @common_options
@@ -546,6 +555,7 @@ def custom_pipeline(
     path: str,
     pipeline_id: str,
     run_eval: bool,
+    pipeline_version: Optional[int],
     output_format: str,
     mode: str,
     api_key: str,
@@ -577,6 +587,7 @@ def custom_pipeline(
         mode=mode,
         pipeline_id=pipeline_id,
         run_eval=run_eval,
+        pipeline_version=pipeline_version,
     )
 
 

@@ -978,6 +978,92 @@ class AsyncDatalabClient:
 
         return result
 
+    async def extract_scores(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[ConversionResult, FileResult]:
+        """
+        Score extraction results from a checkpoint with per-field confidence scores (1-5).
+
+        Requires a checkpoint_id from a previous extract() call with save_checkpoint=True.
+
+        Args:
+            checkpoint_id: Checkpoint ID from a previous extract() call
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        payload = {"checkpoint_id": checkpoint_id}
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+
+        initial_data = await self._submit_with_retry(
+            "/api/v1/extract/score",
+            json=payload,
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        if isinstance(result_data, FileResult):
+            return result_data
+
+        return self._build_conversion_result(result_data)
+
+    async def gen_schemas(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[ConversionResult, FileResult]:
+        """
+        Generate potential extraction schemas for a document checkpoint.
+
+        Requires a checkpoint_id from a previous convert() call with save_checkpoint=True.
+
+        Args:
+            checkpoint_id: Checkpoint ID from a previous convert() call
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        payload = {"checkpoint_id": checkpoint_id}
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+
+        initial_data = await self._submit_with_retry(
+            "/api/v1/marker/extraction/gen_schemas",
+            json=payload,
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        if isinstance(result_data, FileResult):
+            return result_data
+
+        return self._build_conversion_result(result_data)
+
     # Workflow methods
     async def create_workflow(
         self,
@@ -1859,6 +1945,56 @@ class DatalabClient:
                 options=options,
                 save_output=save_output,
                 stream_response_to=stream_response_to,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def extract_scores(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[ConversionResult, FileResult]:
+        """
+        Score extraction results from a checkpoint with per-field confidence scores (sync version)
+
+        Args:
+            checkpoint_id: Checkpoint ID from a previous extract() call
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        return self._run_async(
+            self._async_client.extract_scores(
+                checkpoint_id=checkpoint_id,
+                webhook_url=webhook_url,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def gen_schemas(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[ConversionResult, FileResult]:
+        """
+        Generate potential extraction schemas for a document checkpoint (sync version)
+
+        Args:
+            checkpoint_id: Checkpoint ID from a previous convert() call
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        return self._run_async(
+            self._async_client.gen_schemas(
+                checkpoint_id=checkpoint_id,
+                webhook_url=webhook_url,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
