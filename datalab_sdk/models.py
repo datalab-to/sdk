@@ -53,6 +53,7 @@ class ConvertOptions(ProcessingOptions):
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
     token_efficient_markdown: bool = False  # optimize markdown for LLM token usage
+    eval_rubric_id: Optional[int] = None  # Optional eval rubric ID to run evaluation after conversion
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -84,6 +85,7 @@ class ExtractOptions(ProcessingOptions):
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
+    include_scores: bool = False  # Include confidence scores (1-5) for each extracted field
 
 
 @dataclass
@@ -103,6 +105,12 @@ class CustomPipelineOptions(ProcessingOptions):
 
     pipeline_id: str = ""  # Required - custom pipeline ID (cp_XXXXX format)
     run_eval: bool = False  # Run evaluation rules defined for the pipeline
+    version: Optional[int] = None  # Optional pipeline version number (defaults to active version)
+    paginate: bool = False  # Paginate output with page delimiters
+    add_block_ids: bool = False  # Add data-block-id attributes to HTML elements
+    include_markdown_in_chunks: bool = False  # Include markdown field in chunks/JSON output
+    disable_image_extraction: bool = False  # Disable image extraction from document
+    disable_image_captions: bool = False  # Disable synthetic image captions in output
     mode: str = "fast"  # fast, balanced, accurate
     output_format: str = "markdown"  # markdown, json, html, chunks
     webhook_url: Optional[str] = None
