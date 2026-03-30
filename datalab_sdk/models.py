@@ -84,6 +84,7 @@ class ExtractOptions(ProcessingOptions):
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
+    include_scores: bool = False  # Include per-field confidence scores (1-5) alongside _citations
 
 
 @dataclass
@@ -106,6 +107,12 @@ class CustomPipelineOptions(ProcessingOptions):
     mode: str = "fast"  # fast, balanced, accurate
     output_format: str = "markdown"  # markdown, json, html, chunks
     webhook_url: Optional[str] = None
+    version: Optional[int] = None  # Specific pipeline version; defaults to active version
+    paginate: bool = False  # Separate output by page with horizontal rules
+    add_block_ids: bool = False  # Add data-block-id attributes to HTML elements
+    include_markdown_in_chunks: bool = False  # Include markdown field in chunks/JSON output
+    disable_image_extraction: bool = False  # Disable image extraction
+    disable_image_captions: bool = False  # Disable synthetic image captions in output
 
 
 @dataclass
@@ -172,6 +179,7 @@ class ConversionResult:
     runtime: Optional[float] = None
     cost_breakdown: Optional[Dict[str, Any]] = None
     evaluation: Optional[Dict[str, Any]] = None  # Evaluation results when run_eval=true
+    extraction_score_average: Optional[float] = None  # Average confidence score (1-5) when include_scores=true
 
     def save_output(
         self, output_path: Union[str, Path], save_images: bool = True
@@ -509,3 +517,15 @@ class FileResult:
     status: str
     output_path: Path
     error: Optional[str] = None
+
+
+@dataclass
+class GenSchemasResult:
+    """Result from schema generation via /marker/extraction/gen_schemas endpoint"""
+
+    status: str
+    success: Optional[bool] = None
+    error: Optional[str] = None
+    # Contains simple_schema, moderate_schema, complex_schema (each a JSON string or None)
+    suggestions: Optional[Dict[str, Any]] = None
+    page_count: Optional[int] = None
