@@ -31,6 +31,7 @@ from datalab_sdk.models import (
     ConversionResult,
     CreateDocumentResult,
     FileResult,
+    GenSchemasResult,
     OCRResult,
     ProcessingOptions,
     ConvertOptions,
@@ -418,6 +419,7 @@ class AsyncDatalabClient:
             runtime=result_data.get("runtime"),
             cost_breakdown=result_data.get("cost_breakdown"),
             evaluation=result_data.get("evaluation"),
+            extraction_score_average=result_data.get("extraction_score_average"),
         )
 
     async def _submit_and_poll(
@@ -977,6 +979,94 @@ class AsyncDatalabClient:
             result.save_output(output_path)
 
         return result
+
+    async def extract_score(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ConversionResult:
+        """
+        Score extraction results from a checkpoint with per-field confidence scores (1-5).
+
+        Requires a checkpoint_id from a previous extract() call that used save_checkpoint=True.
+        Returns the same extraction results with additional _score fields alongside _citations.
+
+        Args:
+            checkpoint_id: Checkpoint ID from a prior extract() call with save_checkpoint=True
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        payload: Dict[str, Any] = {"checkpoint_id": checkpoint_id}
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+
+        initial_data = await self._submit_with_retry(
+            "/api/v1/extract/score",
+            json=payload,
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        return self._build_conversion_result(result_data, "markdown")
+
+    async def gen_schemas(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> GenSchemasResult:
+        """
+        Generate potential extraction schemas for a previously parsed document.
+
+        Requires a checkpoint_id from a previous convert() call with save_checkpoint=True.
+        Returns simple, moderate, and complex schema suggestions for use with extract().
+
+        Args:
+            checkpoint_id: Checkpoint ID from a prior convert() call with save_checkpoint=True
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        payload: Dict[str, Any] = {"checkpoint_id": checkpoint_id}
+        if webhook_url:
+            payload["webhook_url"] = webhook_url
+
+        initial_data = await self._submit_with_retry(
+            "/api/v1/marker/extraction/gen_schemas",
+            json=payload,
+        )
+
+        if not initial_data.get("success"):
+            raise DatalabAPIError(
+                f"Request failed: {initial_data.get('error', 'Unknown error')}"
+            )
+
+        result_data = await self._poll_result(
+            initial_data["request_check_url"],
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+
+        return GenSchemasResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            suggestions=result_data.get("suggestions"),
+            page_count=result_data.get("page_count"),
+        )
 
     # Workflow methods
     async def create_workflow(
@@ -1859,6 +1949,56 @@ class DatalabClient:
                 options=options,
                 save_output=save_output,
                 stream_response_to=stream_response_to,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def extract_score(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ConversionResult:
+        """
+        Score extraction results from a checkpoint with per-field confidence scores (sync version)
+
+        Args:
+            checkpoint_id: Checkpoint ID from a prior extract() call with save_checkpoint=True
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        return self._run_async(
+            self._async_client.extract_score(
+                checkpoint_id=checkpoint_id,
+                webhook_url=webhook_url,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def gen_schemas(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> GenSchemasResult:
+        """
+        Generate potential extraction schemas for a previously parsed document (sync version)
+
+        Args:
+            checkpoint_id: Checkpoint ID from a prior convert() call with save_checkpoint=True
+            webhook_url: Optional webhook URL for completion notification
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        return self._run_async(
+            self._async_client.gen_schemas(
+                checkpoint_id=checkpoint_id,
+                webhook_url=webhook_url,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
