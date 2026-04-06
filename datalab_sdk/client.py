@@ -415,6 +415,7 @@ class AsyncDatalabClient:
             checkpoint_id=result_data.get("checkpoint_id"),
             versions=result_data.get("versions"),
             parse_quality_score=result_data.get("parse_quality_score"),
+            extraction_score_average=result_data.get("extraction_score_average"),
             runtime=result_data.get("runtime"),
             cost_breakdown=result_data.get("cost_breakdown"),
             evaluation=result_data.get("evaluation"),
@@ -536,7 +537,14 @@ class AsyncDatalabClient:
                 raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
 
         if options is None:
-            raise ValueError("options must be provided with page_schema")
+            raise ValueError("options must be provided with either page_schema or schema_id")
+
+        if not options.page_schema and not options.schema_id:
+            raise ValueError("Either options.page_schema or options.schema_id must be provided")
+        if options.page_schema and options.schema_id:
+            raise ValueError("Provide either options.page_schema or options.schema_id, not both")
+        if options.schema_version is not None and not options.schema_id:
+            raise ValueError("options.schema_version can only be used with options.schema_id")
 
         has_file = file_path is not None or file_url is not None
         has_checkpoint = options.checkpoint_id is not None
