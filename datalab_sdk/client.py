@@ -36,6 +36,7 @@ from datalab_sdk.models import (
     ConvertOptions,
     ExtractOptions,
     SegmentOptions,
+    CustomProcessorOptions,
     CustomPipelineOptions,
     TrackChangesOptions,
     OCROptions,
@@ -46,6 +47,14 @@ from datalab_sdk.models import (
     WorkflowExecution,
     InputConfig,
     UploadedFileMetadata,
+    ExtractionSchema,
+    PipelineStep,
+    PipelineConfig,
+    PipelineVersion,
+    PipelineExecution,
+    PipelineExecutionStepResult,
+    CustomProcessor,
+    CustomProcessorVersion,
 )
 from datalab_sdk.settings import settings
 
@@ -512,15 +521,15 @@ class AsyncDatalabClient:
         poll_interval: int = 1,
     ) -> Union[ConversionResult, FileResult]:
         """
-        Extract structured data from a document using a JSON schema
+        Extract structured data from a document using a JSON schema or saved extraction schema
 
-        Provide a file for end-to-end processing, or set checkpoint_id in options
-        (from a previous convert() call with save_checkpoint=True) to skip re-parsing.
+        Provide a page_schema for inline extraction, or a schema_id to use a saved
+        extraction schema. These are mutually exclusive.
 
         Args:
             file_path: Path to the file to extract from
             file_url: URL of the file to extract from
-            options: Extraction options (must include page_schema)
+            options: Extraction options (must include page_schema or schema_id)
             save_output: Optional path to save output files
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
@@ -536,7 +545,17 @@ class AsyncDatalabClient:
                 raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
 
         if options is None:
-            raise ValueError("options must be provided with page_schema")
+            raise ValueError("options must be provided with page_schema or schema_id")
+
+        has_page_schema = bool(options.page_schema)
+        has_schema_id = bool(options.schema_id)
+
+        if has_page_schema and has_schema_id:
+            raise ValueError("page_schema and schema_id are mutually exclusive. Provide one or the other.")
+        if not has_page_schema and not has_schema_id:
+            raise ValueError("Either page_schema or schema_id must be provided in options.")
+        if options.schema_version is not None and not has_schema_id:
+            raise ValueError("schema_version can only be used with schema_id.")
 
         has_file = file_path is not None or file_url is not None
         has_checkpoint = options.checkpoint_id is not None
@@ -635,23 +654,23 @@ class AsyncDatalabClient:
 
         return result
 
-    async def run_custom_pipeline(
+    async def run_custom_processor(
         self,
         file_path: Optional[Union[str, Path]] = None,
         file_url: Optional[str] = None,
-        options: Optional[CustomPipelineOptions] = None,
+        options: Optional[CustomProcessorOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
     ) -> Union[ConversionResult, FileResult]:
         """
-        Execute a custom pipeline configuration
+        Execute a custom processor on a document
 
         Args:
             file_path: Path to the file to process
             file_url: URL of the file to process
-            options: Custom pipeline options (must include pipeline_id)
+            options: Custom processor options (must include pipeline_id)
             save_output: Optional path to save output files
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
@@ -670,7 +689,7 @@ class AsyncDatalabClient:
             raise ValueError("options must be provided with pipeline_id")
 
         result_data = await self._submit_and_poll(
-            "/api/v1/custom-pipeline",
+            "/api/v1/custom-processor",
             data=self.get_form_params(
                 file_path=file_path, file_url=file_url, options=options
             ),
@@ -690,6 +709,36 @@ class AsyncDatalabClient:
             result.save_output(output_path)
 
         return result
+
+    async def run_custom_pipeline(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[CustomProcessorOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[ConversionResult, FileResult]:
+        """Execute a custom processor on a document
+
+        .. deprecated::
+            Use run_custom_processor() instead.
+        """
+        warnings.warn(
+            "run_custom_pipeline() is deprecated. Use run_custom_processor() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self.run_custom_processor(
+            file_path=file_path,
+            file_url=file_url,
+            options=options,
+            save_output=save_output,
+            stream_response_to=stream_response_to,
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
 
     async def track_changes(
         self,
@@ -1567,6 +1616,546 @@ class AsyncDatalabClient:
             "message": response.get("message", f"File {file_id} deleted successfully"),
         }
 
+    # --- Extraction Schema methods ---
+
+    async def create_extraction_schema(
+        self,
+        name: str,
+        schema_json: Dict[str, Any],
+        description: Optional[str] = None,
+    ) -> ExtractionSchema:
+        """
+        Create a new extraction schema
+
+        Args:
+            name: Name for the schema (max 200 characters)
+            schema_json: JSON schema for extraction (must contain 'properties' key)
+            description: Optional description
+        """
+        payload: Dict[str, Any] = {"name": name, "schema_json": schema_json}
+        if description is not None:
+            payload["description"] = description
+
+        response = await self._make_request("POST", "/api/v1/extraction_schemas", json=payload)
+        return self._build_extraction_schema(response)
+
+    async def list_extraction_schemas(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        include_archived: bool = False,
+    ) -> Dict[str, Any]:
+        """
+        List extraction schemas for the authenticated user's team
+
+        Args:
+            limit: Maximum number of schemas to return (default: 50, max: 200)
+            offset: Offset for pagination (default: 0)
+            include_archived: Include archived schemas (default: False)
+        """
+        params = f"limit={limit}&offset={offset}&include_archived={str(include_archived).lower()}"
+        response = await self._make_request("GET", f"/api/v1/extraction_schemas?{params}")
+        return {
+            "schemas": [self._build_extraction_schema(s) for s in response.get("schemas", [])],
+            "total": response.get("total", 0),
+        }
+
+    async def get_extraction_schema(self, schema_id: str) -> ExtractionSchema:
+        """
+        Get an extraction schema by its schema_id
+
+        Args:
+            schema_id: Schema ID string (e.g. sch_k8Hx9mP2nQ4v)
+        """
+        response = await self._make_request("GET", f"/api/v1/extraction_schemas/{schema_id}")
+        return self._build_extraction_schema(response)
+
+    async def update_extraction_schema(
+        self,
+        schema_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        schema_json: Optional[Dict[str, Any]] = None,
+        archived: Optional[bool] = None,
+        create_new_version: bool = False,
+    ) -> ExtractionSchema:
+        """
+        Update an extraction schema
+
+        Args:
+            schema_id: Schema ID string (e.g. sch_k8Hx9mP2nQ4v)
+            name: New name (max 200 characters)
+            description: New description
+            schema_json: New JSON schema (must contain 'properties' key)
+            archived: Set archived status
+            create_new_version: If True, bump version and save current state to history
+        """
+        payload: Dict[str, Any] = {}
+        if name is not None:
+            payload["name"] = name
+        if description is not None:
+            payload["description"] = description
+        if schema_json is not None:
+            payload["schema_json"] = schema_json
+        if archived is not None:
+            payload["archived"] = archived
+        if create_new_version:
+            payload["create_new_version"] = True
+
+        response = await self._make_request("PUT", f"/api/v1/extraction_schemas/{schema_id}", json=payload)
+        return self._build_extraction_schema(response)
+
+    async def delete_extraction_schema(self, schema_id: str) -> ExtractionSchema:
+        """
+        Delete (archive) an extraction schema
+
+        Args:
+            schema_id: Schema ID string (e.g. sch_k8Hx9mP2nQ4v)
+        """
+        response = await self._make_request("DELETE", f"/api/v1/extraction_schemas/{schema_id}")
+        return self._build_extraction_schema(response)
+
+    @staticmethod
+    def _build_extraction_schema(data: Dict[str, Any]) -> ExtractionSchema:
+        return ExtractionSchema(
+            id=data.get("id"),
+            schema_id=data["schema_id"],
+            name=data["name"],
+            description=data.get("description"),
+            schema_json=data["schema_json"],
+            version=data.get("version", 1),
+            version_history=data.get("version_history"),
+            archived=data.get("archived", False),
+            created=data.get("created"),
+            updated=data.get("updated"),
+        )
+
+    # --- Pipeline CRUD methods ---
+
+    async def create_pipeline(
+        self,
+        steps: list[PipelineStep],
+    ) -> PipelineConfig:
+        """
+        Create a new pipeline
+
+        Args:
+            steps: Ordered list of PipelineStep objects
+        """
+        payload = {"steps": [s.to_dict() for s in steps]}
+        response = await self._make_request("POST", "/api/v1/pipelines", json=payload)
+        return self._build_pipeline_config(response)
+
+    async def list_pipelines(
+        self,
+        saved_only: bool = True,
+        include_archived: bool = False,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        List pipelines for the authenticated user's team
+
+        Args:
+            saved_only: Only return saved pipelines (default: True)
+            include_archived: Include archived pipelines (default: False)
+            limit: Maximum number to return (default: 50, max: 200)
+            offset: Offset for pagination (default: 0)
+        """
+        params = (
+            f"saved_only={str(saved_only).lower()}"
+            f"&include_archived={str(include_archived).lower()}"
+            f"&limit={limit}&offset={offset}"
+        )
+        response = await self._make_request("GET", f"/api/v1/pipelines?{params}")
+        return {
+            "pipelines": [self._build_pipeline_config(p) for p in response.get("pipelines", [])],
+            "total": response.get("total", 0),
+        }
+
+    async def get_pipeline(self, pipeline_id: str) -> PipelineConfig:
+        """
+        Get a pipeline by its pipeline_id
+
+        Args:
+            pipeline_id: Pipeline ID string (e.g. pl_k8Hx9mP2nQ4v)
+        """
+        response = await self._make_request("GET", f"/api/v1/pipelines/{pipeline_id}")
+        return self._build_pipeline_config(response)
+
+    async def update_pipeline(
+        self,
+        pipeline_id: str,
+        steps: list[PipelineStep],
+    ) -> PipelineConfig:
+        """
+        Update pipeline steps (auto-save path for draft edits)
+
+        Args:
+            pipeline_id: Pipeline ID string
+            steps: New ordered list of PipelineStep objects
+        """
+        payload = {"steps": [s.to_dict() for s in steps]}
+        response = await self._make_request("PUT", f"/api/v1/pipelines/{pipeline_id}", json=payload)
+        return self._build_pipeline_config(response)
+
+    async def save_pipeline(
+        self,
+        pipeline_id: str,
+        name: str = "",
+    ) -> PipelineConfig:
+        """
+        Name and promote a pipeline to saved status
+
+        Args:
+            pipeline_id: Pipeline ID string
+            name: Display name (auto-generated if empty)
+        """
+        response = await self._make_request(
+            "PUT", f"/api/v1/pipelines/{pipeline_id}/save", json={"name": name}
+        )
+        return self._build_pipeline_config(response)
+
+    async def archive_pipeline(self, pipeline_id: str) -> Dict[str, Any]:
+        """Archive a pipeline, hiding it from the default list"""
+        return await self._make_request("POST", f"/api/v1/pipelines/{pipeline_id}/archive")
+
+    async def unarchive_pipeline(self, pipeline_id: str) -> Dict[str, Any]:
+        """Unarchive a pipeline, restoring it to the default list"""
+        return await self._make_request("POST", f"/api/v1/pipelines/{pipeline_id}/unarchive")
+
+    # --- Pipeline Versioning methods ---
+
+    async def create_pipeline_version(
+        self,
+        pipeline_id: str,
+        description: Optional[str] = None,
+    ) -> PipelineVersion:
+        """
+        Create a new version snapshot of the pipeline's current steps
+
+        Args:
+            pipeline_id: Pipeline ID string
+            description: Optional description for this version
+        """
+        payload: Dict[str, Any] = {}
+        if description is not None:
+            payload["description"] = description
+        response = await self._make_request(
+            "POST", f"/api/v1/pipelines/{pipeline_id}/versions", json=payload
+        )
+        return PipelineVersion(
+            id=response.get("id"),
+            version=response["version"],
+            steps=response.get("steps", []),
+            description=response.get("description"),
+            created=response.get("created"),
+        )
+
+    async def list_pipeline_versions(self, pipeline_id: str) -> Dict[str, Any]:
+        """List all versions of a pipeline, newest first"""
+        response = await self._make_request("GET", f"/api/v1/pipelines/{pipeline_id}/versions")
+        return {
+            "versions": [
+                PipelineVersion(
+                    id=v.get("id"),
+                    version=v["version"],
+                    steps=v.get("steps", []),
+                    description=v.get("description"),
+                    created=v.get("created"),
+                )
+                for v in response.get("versions", [])
+            ],
+            "total": response.get("total", 0),
+        }
+
+    async def discard_pipeline_draft(
+        self,
+        pipeline_id: str,
+        version: Optional[int] = None,
+    ) -> PipelineConfig:
+        """
+        Discard draft changes and revert to a published version
+
+        Args:
+            pipeline_id: Pipeline ID string
+            version: Version to revert to (default: active published version)
+        """
+        payload: Dict[str, Any] = {}
+        if version is not None:
+            payload["version"] = version
+        response = await self._make_request(
+            "POST", f"/api/v1/pipelines/{pipeline_id}/discard", json=payload
+        )
+        return self._build_pipeline_config(response)
+
+    async def get_pipeline_rate(self, pipeline_id: str) -> Dict[str, Any]:
+        """
+        Get the per-page rate for a pipeline
+
+        Returns dict with rate_per_1000_pages_cents and rate_breakdown.
+        """
+        return await self._make_request("GET", f"/api/v1/pipelines/{pipeline_id}/rate")
+
+    # --- Pipeline Execution methods ---
+
+    async def run_pipeline(
+        self,
+        pipeline_id: str,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        page_range: Optional[str] = None,
+        output_format: Optional[str] = None,
+        run_evals: bool = False,
+        skip_cache: bool = False,
+        webhook_url: Optional[str] = None,
+        version: Optional[int] = None,
+        max_polls: int = 1,
+        poll_interval: int = 1,
+    ) -> PipelineExecution:
+        """
+        Execute a pipeline on a file
+
+        Args:
+            pipeline_id: Pipeline ID (pl_XXXXX)
+            file_path: Path to the file to process
+            file_url: URL of the file to process
+            page_range: Page range to process (e.g. '0,2-4')
+            output_format: Output format (json, html, markdown, chunks)
+            run_evals: Whether to run evaluation steps
+            skip_cache: Skip executor cache
+            webhook_url: URL to POST when complete
+            version: Pipeline version to execute (0=draft, omit=active)
+            max_polls: Maximum polling attempts after submission (default: 1)
+            poll_interval: Seconds between polls
+        """
+        form_data = self.get_form_params(file_path=file_path, file_url=file_url)
+        if page_range is not None:
+            form_data.add_field("page_range", page_range)
+        if output_format is not None:
+            form_data.add_field("output_format", output_format)
+        if run_evals:
+            form_data.add_field("run_evals", str(run_evals))
+        if skip_cache:
+            form_data.add_field("skip_cache", str(skip_cache))
+        if webhook_url is not None:
+            form_data.add_field("webhook_url", webhook_url)
+        if version is not None:
+            form_data.add_field("version", str(version))
+
+        response = await self._submit_with_retry(
+            f"/api/v1/pipelines/{pipeline_id}/run", data=form_data
+        )
+        execution = self._build_pipeline_execution(response)
+
+        # Poll if requested
+        if max_polls > 1 and execution.status not in ("completed", "completed_with_errors", "failed"):
+            return await self.get_pipeline_execution(
+                execution.execution_id, max_polls=max_polls - 1, poll_interval=poll_interval
+            )
+        return execution
+
+    async def get_pipeline_execution(
+        self,
+        execution_id: str,
+        max_polls: int = 1,
+        poll_interval: int = 1,
+    ) -> PipelineExecution:
+        """
+        Get the status of a pipeline execution, optionally polling until completion
+
+        Args:
+            execution_id: Execution ID (pex_XXXXX)
+            max_polls: Maximum polling attempts (default: 1 for single check)
+            poll_interval: Seconds between polls
+        """
+        for i in range(max_polls):
+            response = await self._make_request(
+                "GET", f"/api/v1/pipelines/executions/{execution_id}"
+            )
+            execution = self._build_pipeline_execution(response)
+
+            if execution.status in ("completed", "completed_with_errors", "failed"):
+                return execution
+
+            if i < max_polls - 1:
+                await asyncio.sleep(poll_interval)
+
+        return execution
+
+    async def list_pipeline_executions(
+        self,
+        pipeline_id: str,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """List recent executions for a pipeline"""
+        response = await self._make_request(
+            "GET", f"/api/v1/pipelines/{pipeline_id}/executions?limit={limit}&offset={offset}"
+        )
+        return {
+            "executions": [
+                self._build_pipeline_execution(e) for e in response.get("executions", [])
+            ],
+            "total": response.get("total", 0),
+        }
+
+    async def get_step_result(
+        self,
+        execution_id: str,
+        step_index: int,
+    ) -> Dict[str, Any]:
+        """
+        Fetch the result of a specific pipeline execution step
+
+        Args:
+            execution_id: Execution ID (pex_XXXXX)
+            step_index: Zero-based step index
+        """
+        return await self._make_request(
+            "GET", f"/api/v1/pipelines/executions/{execution_id}/steps/{step_index}/result"
+        )
+
+    @staticmethod
+    def _build_pipeline_config(data: Dict[str, Any]) -> PipelineConfig:
+        return PipelineConfig(
+            id=data.get("id"),
+            pipeline_id=data["pipeline_id"],
+            name=data.get("name"),
+            steps=data.get("steps", []),
+            is_saved=data.get("is_saved", False),
+            archived=data.get("archived", False),
+            active_version=data.get("active_version", 0),
+            created=data.get("created"),
+            updated=data.get("updated"),
+        )
+
+    @staticmethod
+    def _build_pipeline_execution(data: Dict[str, Any]) -> PipelineExecution:
+        steps = [
+            PipelineExecutionStepResult(
+                step_index=s["step_index"],
+                step_type=s["step_type"],
+                status=s["status"],
+                lookup_key=s.get("lookup_key"),
+                result_url=s.get("result_url"),
+                started_at=s.get("started_at"),
+                finished_at=s.get("finished_at"),
+                error_message=s.get("error_message"),
+                checkpoint_id=s.get("checkpoint_id"),
+            )
+            for s in data.get("steps", [])
+        ]
+        return PipelineExecution(
+            execution_id=data["execution_id"],
+            pipeline_id=data.get("pipeline_id", ""),
+            pipeline_version=data.get("pipeline_version", 0),
+            status=data.get("status", "pending"),
+            steps=steps,
+            started_at=data.get("started_at"),
+            completed_at=data.get("completed_at"),
+            created=data.get("created"),
+            config_snapshot=data.get("config_snapshot"),
+            input_config=data.get("input_config"),
+            rate_breakdown=data.get("rate_breakdown"),
+        )
+
+    # --- Custom Processor Management methods ---
+
+    async def list_custom_processors(
+        self,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> Dict[str, Any]:
+        """
+        List custom processors for the authenticated user's team
+
+        Args:
+            limit: Maximum number to return (default: 50)
+            offset: Offset for pagination (default: 0)
+        """
+        response = await self._make_request(
+            "GET", f"/api/v1/custom_processors?limit={limit}&offset={offset}"
+        )
+        processors = [
+            CustomProcessor(
+                processor_id=p["processor_id"],
+                name=p.get("name"),
+                status=p.get("status", ""),
+                success=p.get("success"),
+                active_version=p.get("active_version", 0),
+                max_version=p.get("max_version", 0),
+                iteration_in_progress=p.get("iteration_in_progress", False),
+                pipeline_id=p.get("pipeline_id"),
+                created_at=p.get("created_at"),
+                completed_at=p.get("completed_at"),
+                error_message=p.get("error_message"),
+                eval_rubric_id=p.get("eval_rubric_id"),
+            )
+            for p in response.get("pipelines", [])
+        ]
+        return {"processors": processors}
+
+    async def get_custom_processor_status(self, lookup_key: str) -> Dict[str, Any]:
+        """
+        Check the status of a custom processor request
+
+        Args:
+            lookup_key: The lookup key returned when the processor was submitted
+        """
+        return await self._make_request("GET", f"/api/v1/custom_processors/{lookup_key}")
+
+    async def list_custom_processor_versions(self, processor_id: str) -> Dict[str, Any]:
+        """
+        List versions of a custom processor
+
+        Args:
+            processor_id: Processor ID (cp_XXXXX)
+        """
+        response = await self._make_request(
+            "GET", f"/api/v1/custom_processors/{processor_id}/versions"
+        )
+        versions = [
+            CustomProcessorVersion(
+                version=v["version"],
+                request_description=v.get("request_description", ""),
+                created_at=v.get("created_at"),
+                runtime=v.get("runtime"),
+                is_active=v.get("is_active", False),
+            )
+            for v in response.get("versions", [])
+        ]
+        return {"versions": versions}
+
+    async def set_active_processor_version(
+        self,
+        processor_id: str,
+        version: int,
+    ) -> Dict[str, Any]:
+        """
+        Set the active version of a custom processor
+
+        Args:
+            processor_id: Processor ID (cp_XXXXX)
+            version: Version number to activate
+        """
+        form_data = aiohttp.FormData()
+        form_data.add_field("version", str(version))
+        return await self._submit_with_retry(
+            f"/api/v1/custom_processors/{processor_id}/set_active", data=form_data
+        )
+
+    async def archive_custom_processor(self, processor_id: str) -> Dict[str, Any]:
+        """
+        Archive a custom processor
+
+        Args:
+            processor_id: Processor ID (cp_XXXXX)
+        """
+        return await self._make_request(
+            "POST", f"/api/v1/custom_processors/{processor_id}/archive"
+        )
+
 
 class DatalabClient:
     """Synchronous wrapper around AsyncDatalabClient"""
@@ -1646,12 +2235,12 @@ class DatalabClient:
         poll_interval: int = 1,
     ) -> Union[ConversionResult, FileResult]:
         """
-        Extract structured data from a document using a JSON schema (sync version)
+        Extract structured data using a JSON schema or saved extraction schema (sync version)
 
         Args:
             file_path: Path to the file to extract from
             file_url: URL of the file to extract from
-            options: Extraction options (must include page_schema)
+            options: Extraction options (must include page_schema or schema_id)
             save_output: Optional path to save output files
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
@@ -1703,30 +2292,30 @@ class DatalabClient:
             )
         )
 
-    def run_custom_pipeline(
+    def run_custom_processor(
         self,
         file_path: Optional[Union[str, Path]] = None,
         file_url: Optional[str] = None,
-        options: Optional[CustomPipelineOptions] = None,
+        options: Optional[CustomProcessorOptions] = None,
         save_output: Optional[Union[str, Path]] = None,
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
     ) -> Union[ConversionResult, FileResult]:
         """
-        Execute a custom pipeline configuration (sync version)
+        Execute a custom processor on a document (sync version)
 
         Args:
             file_path: Path to the file to process
             file_url: URL of the file to process
-            options: Custom pipeline options (must include pipeline_id)
+            options: Custom processor options (must include pipeline_id)
             save_output: Optional path to save output files
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
         return self._run_async(
-            self._async_client.run_custom_pipeline(
+            self._async_client.run_custom_processor(
                 file_path=file_path,
                 file_url=file_url,
                 options=options,
@@ -1735,6 +2324,36 @@ class DatalabClient:
                 max_polls=max_polls,
                 poll_interval=poll_interval,
             )
+        )
+
+    def run_custom_pipeline(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[CustomProcessorOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[ConversionResult, FileResult]:
+        """Execute a custom processor on a document (sync version)
+
+        .. deprecated::
+            Use run_custom_processor() instead.
+        """
+        warnings.warn(
+            "run_custom_pipeline() is deprecated. Use run_custom_processor() instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.run_custom_processor(
+            file_path=file_path,
+            file_url=file_url,
+            options=options,
+            save_output=save_output,
+            stream_response_to=stream_response_to,
+            max_polls=max_polls,
+            poll_interval=poll_interval,
         )
 
     def track_changes(
@@ -2050,4 +2669,209 @@ class DatalabClient:
         """
         return self._run_async(
             self._async_client.delete_workflow(workflow_id=workflow_id)
+        )
+
+    # --- Extraction Schema methods (sync) ---
+
+    def create_extraction_schema(
+        self, name: str, schema_json: Dict[str, Any], description: Optional[str] = None,
+    ) -> ExtractionSchema:
+        """Create a new extraction schema (sync version)"""
+        return self._run_async(
+            self._async_client.create_extraction_schema(
+                name=name, schema_json=schema_json, description=description,
+            )
+        )
+
+    def list_extraction_schemas(
+        self, limit: int = 50, offset: int = 0, include_archived: bool = False,
+    ) -> Dict[str, Any]:
+        """List extraction schemas (sync version)"""
+        return self._run_async(
+            self._async_client.list_extraction_schemas(
+                limit=limit, offset=offset, include_archived=include_archived,
+            )
+        )
+
+    def get_extraction_schema(self, schema_id: str) -> ExtractionSchema:
+        """Get an extraction schema by ID (sync version)"""
+        return self._run_async(self._async_client.get_extraction_schema(schema_id=schema_id))
+
+    def update_extraction_schema(
+        self,
+        schema_id: str,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        schema_json: Optional[Dict[str, Any]] = None,
+        archived: Optional[bool] = None,
+        create_new_version: bool = False,
+    ) -> ExtractionSchema:
+        """Update an extraction schema (sync version)"""
+        return self._run_async(
+            self._async_client.update_extraction_schema(
+                schema_id=schema_id, name=name, description=description,
+                schema_json=schema_json, archived=archived,
+                create_new_version=create_new_version,
+            )
+        )
+
+    def delete_extraction_schema(self, schema_id: str) -> ExtractionSchema:
+        """Delete (archive) an extraction schema (sync version)"""
+        return self._run_async(self._async_client.delete_extraction_schema(schema_id=schema_id))
+
+    # --- Pipeline methods (sync) ---
+
+    def create_pipeline(self, steps: list[PipelineStep]) -> PipelineConfig:
+        """Create a new pipeline (sync version)"""
+        return self._run_async(self._async_client.create_pipeline(steps=steps))
+
+    def list_pipelines(
+        self, saved_only: bool = True, include_archived: bool = False,
+        limit: int = 50, offset: int = 0,
+    ) -> Dict[str, Any]:
+        """List pipelines (sync version)"""
+        return self._run_async(
+            self._async_client.list_pipelines(
+                saved_only=saved_only, include_archived=include_archived,
+                limit=limit, offset=offset,
+            )
+        )
+
+    def get_pipeline(self, pipeline_id: str) -> PipelineConfig:
+        """Get a pipeline by ID (sync version)"""
+        return self._run_async(self._async_client.get_pipeline(pipeline_id=pipeline_id))
+
+    def update_pipeline(self, pipeline_id: str, steps: list[PipelineStep]) -> PipelineConfig:
+        """Update pipeline steps (sync version)"""
+        return self._run_async(
+            self._async_client.update_pipeline(pipeline_id=pipeline_id, steps=steps)
+        )
+
+    def save_pipeline(self, pipeline_id: str, name: str = "") -> PipelineConfig:
+        """Save and name a pipeline (sync version)"""
+        return self._run_async(
+            self._async_client.save_pipeline(pipeline_id=pipeline_id, name=name)
+        )
+
+    def archive_pipeline(self, pipeline_id: str) -> Dict[str, Any]:
+        """Archive a pipeline (sync version)"""
+        return self._run_async(self._async_client.archive_pipeline(pipeline_id=pipeline_id))
+
+    def unarchive_pipeline(self, pipeline_id: str) -> Dict[str, Any]:
+        """Unarchive a pipeline (sync version)"""
+        return self._run_async(self._async_client.unarchive_pipeline(pipeline_id=pipeline_id))
+
+    def create_pipeline_version(
+        self, pipeline_id: str, description: Optional[str] = None,
+    ) -> PipelineVersion:
+        """Create a pipeline version snapshot (sync version)"""
+        return self._run_async(
+            self._async_client.create_pipeline_version(
+                pipeline_id=pipeline_id, description=description,
+            )
+        )
+
+    def list_pipeline_versions(self, pipeline_id: str) -> Dict[str, Any]:
+        """List pipeline versions (sync version)"""
+        return self._run_async(self._async_client.list_pipeline_versions(pipeline_id=pipeline_id))
+
+    def discard_pipeline_draft(
+        self, pipeline_id: str, version: Optional[int] = None,
+    ) -> PipelineConfig:
+        """Discard draft and revert to a published version (sync version)"""
+        return self._run_async(
+            self._async_client.discard_pipeline_draft(
+                pipeline_id=pipeline_id, version=version,
+            )
+        )
+
+    def get_pipeline_rate(self, pipeline_id: str) -> Dict[str, Any]:
+        """Get pipeline per-page rate (sync version)"""
+        return self._run_async(self._async_client.get_pipeline_rate(pipeline_id=pipeline_id))
+
+    def run_pipeline(
+        self,
+        pipeline_id: str,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        page_range: Optional[str] = None,
+        output_format: Optional[str] = None,
+        run_evals: bool = False,
+        skip_cache: bool = False,
+        webhook_url: Optional[str] = None,
+        version: Optional[int] = None,
+        max_polls: int = 1,
+        poll_interval: int = 1,
+    ) -> PipelineExecution:
+        """Execute a pipeline on a file (sync version)"""
+        return self._run_async(
+            self._async_client.run_pipeline(
+                pipeline_id=pipeline_id, file_path=file_path, file_url=file_url,
+                page_range=page_range, output_format=output_format,
+                run_evals=run_evals, skip_cache=skip_cache,
+                webhook_url=webhook_url, version=version,
+                max_polls=max_polls, poll_interval=poll_interval,
+            )
+        )
+
+    def get_pipeline_execution(
+        self, execution_id: str, max_polls: int = 1, poll_interval: int = 1,
+    ) -> PipelineExecution:
+        """Get pipeline execution status (sync version)"""
+        return self._run_async(
+            self._async_client.get_pipeline_execution(
+                execution_id=execution_id, max_polls=max_polls, poll_interval=poll_interval,
+            )
+        )
+
+    def list_pipeline_executions(
+        self, pipeline_id: str, limit: int = 20, offset: int = 0,
+    ) -> Dict[str, Any]:
+        """List pipeline executions (sync version)"""
+        return self._run_async(
+            self._async_client.list_pipeline_executions(
+                pipeline_id=pipeline_id, limit=limit, offset=offset,
+            )
+        )
+
+    def get_step_result(self, execution_id: str, step_index: int) -> Dict[str, Any]:
+        """Get a pipeline execution step result (sync version)"""
+        return self._run_async(
+            self._async_client.get_step_result(
+                execution_id=execution_id, step_index=step_index,
+            )
+        )
+
+    # --- Custom Processor Management methods (sync) ---
+
+    def list_custom_processors(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        """List custom processors (sync version)"""
+        return self._run_async(
+            self._async_client.list_custom_processors(limit=limit, offset=offset)
+        )
+
+    def get_custom_processor_status(self, lookup_key: str) -> Dict[str, Any]:
+        """Check custom processor request status (sync version)"""
+        return self._run_async(
+            self._async_client.get_custom_processor_status(lookup_key=lookup_key)
+        )
+
+    def list_custom_processor_versions(self, processor_id: str) -> Dict[str, Any]:
+        """List custom processor versions (sync version)"""
+        return self._run_async(
+            self._async_client.list_custom_processor_versions(processor_id=processor_id)
+        )
+
+    def set_active_processor_version(self, processor_id: str, version: int) -> Dict[str, Any]:
+        """Set active processor version (sync version)"""
+        return self._run_async(
+            self._async_client.set_active_processor_version(
+                processor_id=processor_id, version=version,
+            )
+        )
+
+    def archive_custom_processor(self, processor_id: str) -> Dict[str, Any]:
+        """Archive a custom processor (sync version)"""
+        return self._run_async(
+            self._async_client.archive_custom_processor(processor_id=processor_id)
         )

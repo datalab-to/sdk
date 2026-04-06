@@ -53,6 +53,7 @@ class ConvertOptions(ProcessingOptions):
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
     token_efficient_markdown: bool = False  # optimize markdown for LLM token usage
+    eval_rubric_id: Optional[int] = None  # run evaluation rubric after conversion
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -78,12 +79,22 @@ class ConvertOptions(ProcessingOptions):
 class ExtractOptions(ProcessingOptions):
     """Options for structured data extraction via /extract endpoint"""
 
-    page_schema: str = ""  # Required - JSON schema with 'properties' key
+    page_schema: str = ""  # JSON schema with 'properties' key. Mutually exclusive with schema_id.
+    schema_id: Optional[str] = None  # ID of a saved extraction schema (e.g. sch_k8Hx9mP2nQ4v). Mutually exclusive with page_schema.
+    schema_version: Optional[int] = None  # Version of the schema. Only valid with schema_id.
     checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
     mode: str = "fast"  # fast, balanced, accurate
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
+
+    def to_form_data(self) -> Dict[str, Any]:
+        """Convert to form data format for API requests"""
+        form_data = super().to_form_data()
+        # When using schema_id, suppress the empty default page_schema
+        if self.schema_id and not self.page_schema:
+            form_data.pop("page_schema", None)
+        return form_data
 
 
 @dataclass
@@ -98,14 +109,33 @@ class SegmentOptions(ProcessingOptions):
 
 
 @dataclass
-class CustomPipelineOptions(ProcessingOptions):
-    """Options for running a custom pipeline via /custom-pipeline endpoint"""
+class CustomProcessorOptions(ProcessingOptions):
+    """Options for running a custom processor via /custom-processor endpoint"""
 
-    pipeline_id: str = ""  # Required - custom pipeline ID (cp_XXXXX format)
-    run_eval: bool = False  # Run evaluation rules defined for the pipeline
+    pipeline_id: str = ""  # Required - custom processor ID (cp_XXXXX format)
+    version: Optional[int] = None  # Specify processor version to run (default: active version)
+    run_eval: bool = False  # Run evaluation rules defined for the processor
     mode: str = "fast"  # fast, balanced, accurate
     output_format: str = "markdown"  # markdown, json, html, chunks
+    paginate: bool = False  # Separate pages with horizontal rules containing page numbers
+    add_block_ids: bool = False  # Add data-block-id attributes to HTML elements
+    include_markdown_in_chunks: bool = False  # Include markdown field in chunks/JSON output
+    disable_image_extraction: bool = False  # Disable image extraction from the document
+    disable_image_captions: bool = False  # Disable synthetic image captions/descriptions
     webhook_url: Optional[str] = None
+
+    @property
+    def processor_id(self) -> str:
+        """Alias for pipeline_id (the API wire format uses pipeline_id)"""
+        return self.pipeline_id
+
+    @processor_id.setter
+    def processor_id(self, value: str):
+        self.pipeline_id = value
+
+
+# Backward-compatible alias
+CustomPipelineOptions = CustomProcessorOptions
 
 
 @dataclass
@@ -509,3 +539,137 @@ class FileResult:
     status: str
     output_path: Path
     error: Optional[str] = None
+
+
+# --- Extraction Schema models ---
+
+
+@dataclass
+class ExtractionSchema:
+    """Represents a saved extraction schema for structured extraction"""
+
+    schema_id: str
+    name: str
+    schema_json: Dict[str, Any]
+    id: Optional[int] = None
+    description: Optional[str] = None
+    version: int = 1
+    version_history: Optional[List[Dict[str, Any]]] = None
+    archived: bool = False
+    created: Optional[str] = None
+    updated: Optional[str] = None
+
+
+# --- Pipeline models ---
+
+
+@dataclass
+class PipelineStep:
+    """Configuration for a single pipeline step"""
+
+    type: str  # convert, extract, segment, custom
+    settings: Dict[str, Any] = field(default_factory=dict)
+    custom_processor_id: Optional[str] = None  # For custom steps (cp_XXXXX)
+    eval_rubric_id: Optional[int] = None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dictionary for API requests"""
+        data: Dict[str, Any] = {
+            "type": self.type,
+            "settings": self.settings,
+        }
+        if self.custom_processor_id is not None:
+            data["custom_processor_id"] = self.custom_processor_id
+        if self.eval_rubric_id is not None:
+            data["eval_rubric_id"] = self.eval_rubric_id
+        return data
+
+
+@dataclass
+class PipelineConfig:
+    """Represents a pipeline definition"""
+
+    pipeline_id: str  # pl_XXXXX
+    steps: List[Dict[str, Any]]
+    name: Optional[str] = None
+    is_saved: bool = False
+    archived: bool = False
+    active_version: int = 0
+    id: Optional[int] = None
+    created: Optional[str] = None
+    updated: Optional[str] = None
+
+
+@dataclass
+class PipelineVersion:
+    """Immutable version snapshot of a pipeline"""
+
+    version: int
+    steps: List[Dict[str, Any]]
+    description: Optional[str] = None
+    id: Optional[int] = None
+    created: Optional[str] = None
+
+
+@dataclass
+class PipelineExecutionStepResult:
+    """Status of a single step within a pipeline execution"""
+
+    step_index: int
+    step_type: str
+    status: str  # pending, dispatched, running, completed, failed
+    lookup_key: Optional[str] = None
+    result_url: Optional[str] = None
+    started_at: Optional[str] = None
+    finished_at: Optional[str] = None
+    error_message: Optional[str] = None
+    checkpoint_id: Optional[str] = None
+
+
+@dataclass
+class PipelineExecution:
+    """Result from pipeline execution"""
+
+    execution_id: str  # pex_XXXXX
+    pipeline_id: str  # pl_XXXXX
+    pipeline_version: int
+    status: str  # pending, running, completed, completed_with_errors, failed
+    steps: List[PipelineExecutionStepResult] = field(default_factory=list)
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    created: Optional[str] = None
+    config_snapshot: Optional[Dict[str, Any]] = None
+    input_config: Optional[Dict[str, Any]] = None
+    rate_breakdown: Optional[Dict[str, Any]] = None
+
+
+# --- Custom Processor models ---
+
+
+@dataclass
+class CustomProcessor:
+    """Represents a custom processor (formerly custom pipeline)"""
+
+    processor_id: str  # cp_XXXXX
+    status: str  # processing, completed, failed
+    name: Optional[str] = None
+    success: Optional[bool] = None
+    active_version: int = 0
+    max_version: int = 0
+    iteration_in_progress: bool = False
+    pipeline_id: Optional[str] = None  # auto-created workspace pipeline (pl_XXXXX)
+    created_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    error_message: Optional[str] = None
+    eval_rubric_id: Optional[int] = None
+
+
+@dataclass
+class CustomProcessorVersion:
+    """Version information for a custom processor"""
+
+    version: int
+    request_description: str = ""
+    created_at: Optional[str] = None
+    runtime: Optional[float] = None
+    is_active: bool = False

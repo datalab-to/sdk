@@ -15,6 +15,7 @@ from .models import (
     ConvertOptions,
     ExtractOptions,
     SegmentOptions,
+    CustomProcessorOptions,
     CustomPipelineOptions,
     TrackChangesOptions,
     OCROptions,
@@ -25,6 +26,14 @@ from .models import (
     WorkflowExecution,
     InputConfig,
     UploadedFileMetadata,
+    ExtractionSchema,
+    PipelineStep,
+    PipelineConfig,
+    PipelineVersion,
+    PipelineExecution,
+    PipelineExecutionStepResult,
+    CustomProcessor,
+    CustomProcessorVersion,
 )
 from .settings import settings
 
@@ -42,6 +51,7 @@ __all__ = [
     "ConvertOptions",
     "ExtractOptions",
     "SegmentOptions",
+    "CustomProcessorOptions",
     "CustomPipelineOptions",
     "TrackChangesOptions",
     "OCROptions",
@@ -52,4 +62,12 @@ __all__ = [
     "WorkflowExecution",
     "InputConfig",
     "UploadedFileMetadata",
+    "ExtractionSchema",
+    "PipelineStep",
+    "PipelineConfig",
+    "PipelineVersion",
+    "PipelineExecution",
+    "PipelineExecutionStepResult",
+    "CustomProcessor",
+    "CustomProcessorVersion",
 ]
