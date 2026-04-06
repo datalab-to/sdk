@@ -20,7 +20,7 @@ from datalab_sdk.models import (
     TrackChangesOptions,
     OCROptions,
     ExtractionSchema,
-    PipelineStep,
+    PipelineProcessor,
     PipelineConfig,
     PipelineExecution,
     PipelineExecutionStepResult,
@@ -1052,7 +1052,7 @@ class TestPipelineCRUD:
             with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
                 mock_req.return_value = mock_response
                 result = await client.create_pipeline(
-                    steps=[PipelineStep(type="convert")]
+                    steps=[PipelineProcessor(type="convert")]
                 )
                 assert isinstance(result, PipelineConfig)
                 assert result.pipeline_id == "pl_abc123"
@@ -1183,16 +1183,16 @@ class TestCustomProcessorManagement:
                 assert result["versions"][0].is_active is True
 
 
-class TestPipelineStepModel:
-    """Test PipelineStep model"""
+class TestPipelineProcessorModel:
+    """Test PipelineProcessor model"""
 
     def test_to_dict_minimal(self):
-        step = PipelineStep(type="convert")
+        step = PipelineProcessor(type="convert")
         d = step.to_dict()
         assert d == {"type": "convert", "settings": {}}
 
     def test_to_dict_with_custom_processor(self):
-        step = PipelineStep(
+        step = PipelineProcessor(
             type="custom", settings={"mode": "fast"},
             custom_processor_id="cp_abc12", eval_rubric_id=5,
         )

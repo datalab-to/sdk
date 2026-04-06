@@ -48,7 +48,7 @@ from datalab_sdk.models import (
     InputConfig,
     UploadedFileMetadata,
     ExtractionSchema,
-    PipelineStep,
+    PipelineProcessor,
     PipelineConfig,
     PipelineVersion,
     PipelineExecution,
@@ -1734,13 +1734,13 @@ class AsyncDatalabClient:
 
     async def create_pipeline(
         self,
-        steps: list[PipelineStep],
+        steps: list[PipelineProcessor],
     ) -> PipelineConfig:
         """
         Create a new pipeline
 
         Args:
-            steps: Ordered list of PipelineStep objects
+            steps: Ordered list of PipelineProcessor objects
         """
         payload = {"steps": [s.to_dict() for s in steps]}
         response = await self._make_request("POST", "/api/v1/pipelines", json=payload)
@@ -1786,14 +1786,14 @@ class AsyncDatalabClient:
     async def update_pipeline(
         self,
         pipeline_id: str,
-        steps: list[PipelineStep],
+        steps: list[PipelineProcessor],
     ) -> PipelineConfig:
         """
         Update pipeline steps (auto-save path for draft edits)
 
         Args:
             pipeline_id: Pipeline ID string
-            steps: New ordered list of PipelineStep objects
+            steps: New ordered list of PipelineProcessor objects
         """
         payload = {"steps": [s.to_dict() for s in steps]}
         response = await self._make_request("PUT", f"/api/v1/pipelines/{pipeline_id}", json=payload)
@@ -2721,7 +2721,7 @@ class DatalabClient:
 
     # --- Pipeline methods (sync) ---
 
-    def create_pipeline(self, steps: list[PipelineStep]) -> PipelineConfig:
+    def create_pipeline(self, steps: list[PipelineProcessor]) -> PipelineConfig:
         """Create a new pipeline (sync version)"""
         return self._run_async(self._async_client.create_pipeline(steps=steps))
 
@@ -2741,7 +2741,7 @@ class DatalabClient:
         """Get a pipeline by ID (sync version)"""
         return self._run_async(self._async_client.get_pipeline(pipeline_id=pipeline_id))
 
-    def update_pipeline(self, pipeline_id: str, steps: list[PipelineStep]) -> PipelineConfig:
+    def update_pipeline(self, pipeline_id: str, steps: list[PipelineProcessor]) -> PipelineConfig:
         """Update pipeline steps (sync version)"""
         return self._run_async(
             self._async_client.update_pipeline(pipeline_id=pipeline_id, steps=steps)

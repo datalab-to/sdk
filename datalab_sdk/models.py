@@ -564,8 +564,8 @@ class ExtractionSchema:
 
 
 @dataclass
-class PipelineStep:
-    """Configuration for a single pipeline step"""
+class PipelineProcessor:
+    """Configuration for a single processor within a pipeline"""
 
     type: str  # convert, extract, segment, custom
     settings: Dict[str, Any] = field(default_factory=dict)
