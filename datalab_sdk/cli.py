@@ -270,6 +270,8 @@ def process_documents(
     mode: str = "fast",
     # Extract-specific
     page_schema: Optional[str] = None,
+    schema_id: Optional[str] = None,
+    schema_version: Optional[int] = None,
     checkpoint_id: Optional[str] = None,
     # Segment-specific
     segmentation_schema: Optional[str] = None,
@@ -323,7 +325,9 @@ def process_documents(
             )
         elif method == "extract":
             options = ExtractOptions(
-                page_schema=page_schema or "",
+                page_schema=page_schema,
+                schema_id=schema_id,
+                schema_version=schema_version,
                 checkpoint_id=checkpoint_id,
                 mode=mode,
                 output_format=output_format or "markdown",
@@ -450,14 +454,18 @@ def convert(
 
 @click.command()
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--page_schema", required=True, help="JSON schema for structured extraction (must contain 'properties' key)")
+@click.option("--page_schema", default=None, help="Inline JSON schema for structured extraction (must contain 'properties' key). Mutually exclusive with --schema_id.")
+@click.option("--schema_id", default=None, help="Saved schema ID (e.g. sch_k8Hx9mP2nQ4v). Mutually exclusive with --page_schema.")
+@click.option("--schema_version", default=None, type=int, help="Version of the saved schema to use. Only valid with --schema_id.")
 @click.option("--checkpoint_id", help="Checkpoint ID from a previous convert (skips re-parsing)")
 @click.option("--format", "output_format", default="markdown", type=click.Choice(["markdown", "html", "json", "chunks"]), help="Output format")
 @click.option("--mode", type=click.Choice(["fast", "balanced", "accurate"]), default="fast", help="Processing mode")
 @common_options
 def extract(
     path: str,
-    page_schema: str,
+    page_schema: Optional[str],
+    schema_id: Optional[str],
+    schema_version: Optional[int],
     checkpoint_id: Optional[str],
     output_format: str,
     mode: str,
@@ -473,6 +481,12 @@ def extract(
     poll_interval: int,
 ):
     """Extract structured data from documents using a JSON schema"""
+    if not page_schema and not schema_id:
+        raise click.UsageError("Either --page_schema or --schema_id must be provided.")
+    if page_schema and schema_id:
+        raise click.UsageError("--page_schema and --schema_id are mutually exclusive.")
+    if schema_version is not None and not schema_id:
+        raise click.UsageError("--schema_version can only be used with --schema_id.")
     process_documents(
         path=path,
         method="extract",
@@ -489,6 +503,8 @@ def extract(
         output_format=output_format,
         mode=mode,
         page_schema=page_schema,
+        schema_id=schema_id,
+        schema_version=schema_version,
         checkpoint_id=checkpoint_id,
     )
 

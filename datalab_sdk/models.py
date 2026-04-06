@@ -53,6 +53,7 @@ class ConvertOptions(ProcessingOptions):
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
     token_efficient_markdown: bool = False  # optimize markdown for LLM token usage
+    eval_rubric_id: Optional[int] = None  # run evaluation against a saved rubric after conversion
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -76,9 +77,15 @@ class ConvertOptions(ProcessingOptions):
 
 @dataclass
 class ExtractOptions(ProcessingOptions):
-    """Options for structured data extraction via /extract endpoint"""
+    """Options for structured data extraction via /extract endpoint
 
-    page_schema: str = ""  # Required - JSON schema with 'properties' key
+    Provide either page_schema (inline JSON schema) or schema_id (saved schema reference),
+    but not both. schema_version can only be used together with schema_id.
+    """
+
+    page_schema: Optional[str] = None  # Inline JSON schema with 'properties' key
+    schema_id: Optional[str] = None  # Saved schema ID (e.g. sch_k8Hx9mP2nQ4v); mutually exclusive with page_schema
+    schema_version: Optional[int] = None  # Version of the saved schema; only valid with schema_id
     checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
     mode: str = "fast"  # fast, balanced, accurate
     output_format: str = "markdown"  # markdown, json, html, chunks
@@ -169,6 +176,7 @@ class ConversionResult:
     checkpoint_id: Optional[str] = None
     versions: Optional[Union[Dict[str, Any], str]] = None
     parse_quality_score: Optional[float] = None
+    extraction_score_average: Optional[float] = None  # Average confidence score (1-5) across extracted fields
     runtime: Optional[float] = None
     cost_breakdown: Optional[Dict[str, Any]] = None
     evaluation: Optional[Dict[str, Any]] = None  # Evaluation results when run_eval=true
