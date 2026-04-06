@@ -16,8 +16,16 @@ from datalab_sdk.models import (
     ExtractOptions,
     SegmentOptions,
     CustomPipelineOptions,
+    CustomProcessorOptions,
     TrackChangesOptions,
     OCROptions,
+    ExtractionSchema,
+    PipelineProcessor,
+    PipelineConfig,
+    PipelineExecution,
+    PipelineExecutionStepResult,
+    CustomProcessor,
+    CustomProcessorVersion,
 )
 from datalab_sdk.exceptions import (
     DatalabAPIError,
@@ -789,3 +797,405 @@ class TestPollingLoop:
                     await client._poll_result(
                         "https://api.example.com/check", max_polls=1, poll_interval=0
                     )
+
+
+class TestExtractWithSchemaId:
+    """Test extract with schema_id support"""
+
+    @pytest.mark.asyncio
+    async def test_extract_with_schema_id(self, temp_dir):
+        """Test extraction using a saved schema ID"""
+        pdf_file = temp_dir / "test.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4\n%Test PDF content\n%%EOF\n")
+
+        mock_initial = {
+            "success": True,
+            "request_id": "ext-schema",
+            "request_check_url": "https://api.datalab.to/api/v1/extract/ext-schema",
+        }
+        mock_result = {
+            "success": True,
+            "status": "complete",
+            "output_format": "markdown",
+            "extraction_schema_json": '{"name": "John"}',
+        }
+
+        options = ExtractOptions(schema_id="sch_k8Hx9mP2nQ4v")
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                with patch.object(client, "_poll_result", new_callable=AsyncMock) as mock_poll:
+                    mock_req.return_value = mock_initial
+                    mock_poll.return_value = mock_result
+                    result = await client.extract(pdf_file, options=options)
+                    assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_extract_rejects_both_page_schema_and_schema_id(self):
+        options = ExtractOptions(
+            page_schema='{"properties": {"name": {"type": "string"}}}',
+            schema_id="sch_k8Hx9mP2nQ4v",
+        )
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with pytest.raises(ValueError, match="mutually exclusive"):
+                await client.extract(file_path="test.pdf", options=options)
+
+    @pytest.mark.asyncio
+    async def test_extract_rejects_neither_page_schema_nor_schema_id(self):
+        options = ExtractOptions()
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with pytest.raises(ValueError, match="Either page_schema or schema_id"):
+                await client.extract(file_path="test.pdf", options=options)
+
+    @pytest.mark.asyncio
+    async def test_extract_rejects_schema_version_without_schema_id(self):
+        options = ExtractOptions(
+            page_schema='{"properties": {"name": {"type": "string"}}}',
+            schema_version=2,
+        )
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with pytest.raises(ValueError, match="schema_version can only be used with schema_id"):
+                await client.extract(file_path="test.pdf", options=options)
+
+    def test_extract_options_form_data_suppresses_empty_page_schema(self):
+        """When schema_id is set and page_schema is empty, page_schema should not be in form data"""
+        options = ExtractOptions(schema_id="sch_abc123")
+        form_data = options.to_form_data()
+        assert "schema_id" in form_data
+        assert "page_schema" not in form_data
+
+
+class TestCustomProcessorOptions:
+    """Test CustomProcessorOptions new fields and alias"""
+
+    def test_new_fields_have_defaults(self):
+        options = CustomProcessorOptions(pipeline_id="cp_abc12")
+        assert options.version is None
+        assert options.paginate is False
+        assert options.add_block_ids is False
+        assert options.include_markdown_in_chunks is False
+        assert options.disable_image_extraction is False
+        assert options.disable_image_captions is False
+
+    def test_processor_id_alias(self):
+        options = CustomProcessorOptions(pipeline_id="cp_abc12")
+        assert options.processor_id == "cp_abc12"
+        options.processor_id = "cp_xyz99"
+        assert options.pipeline_id == "cp_xyz99"
+
+    def test_backward_compatible_alias(self):
+        """CustomPipelineOptions should be the same class"""
+        assert CustomPipelineOptions is CustomProcessorOptions
+
+    def test_form_data_includes_new_fields(self):
+        options = CustomProcessorOptions(
+            pipeline_id="cp_abc12", version=3, paginate=True, disable_image_extraction=True,
+        )
+        form_data = options.to_form_data()
+        assert "version" in form_data
+        assert "paginate" in form_data
+        assert "disable_image_extraction" in form_data
+
+
+class TestConvertEvalRubricId:
+    """Test eval_rubric_id on ConvertOptions"""
+
+    def test_default_none(self):
+        options = ConvertOptions()
+        assert options.eval_rubric_id is None
+        form_data = options.to_form_data()
+        assert "eval_rubric_id" not in form_data
+
+    def test_serialized_when_set(self):
+        options = ConvertOptions(eval_rubric_id=42)
+        form_data = options.to_form_data()
+        assert "eval_rubric_id" in form_data
+
+
+class TestRunCustomProcessorMethod:
+    """Test run_custom_processor and deprecation of run_custom_pipeline"""
+
+    @pytest.mark.asyncio
+    async def test_run_custom_processor(self, temp_dir):
+        pdf_file = temp_dir / "test.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4\n%Test PDF content\n%%EOF\n")
+
+        mock_initial = {
+            "success": True,
+            "request_id": "cp-id",
+            "request_check_url": "https://api.datalab.to/api/v1/custom-processor/cp-id",
+        }
+        mock_result = {
+            "success": True,
+            "status": "complete",
+            "output_format": "markdown",
+            "markdown": "# Output",
+        }
+
+        options = CustomProcessorOptions(pipeline_id="cp_abc12")
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                with patch.object(client, "_poll_result", new_callable=AsyncMock) as mock_poll:
+                    mock_req.return_value = mock_initial
+                    mock_poll.return_value = mock_result
+                    result = await client.run_custom_processor(pdf_file, options=options)
+                    assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_run_custom_pipeline_emits_deprecation(self, temp_dir):
+        pdf_file = temp_dir / "test.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4\n%Test PDF content\n%%EOF\n")
+
+        mock_initial = {
+            "success": True,
+            "request_id": "cp-id",
+            "request_check_url": "https://api.datalab.to/api/v1/custom-processor/cp-id",
+        }
+        mock_result = {
+            "success": True,
+            "status": "complete",
+            "output_format": "markdown",
+            "markdown": "# Output",
+        }
+
+        options = CustomProcessorOptions(pipeline_id="cp_abc12")
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                with patch.object(client, "_poll_result", new_callable=AsyncMock) as mock_poll:
+                    mock_req.return_value = mock_initial
+                    mock_poll.return_value = mock_result
+
+                    with warnings.catch_warnings(record=True) as w:
+                        warnings.simplefilter("always")
+                        result = await client.run_custom_pipeline(pdf_file, options=options)
+                        assert len(w) == 1
+                        assert issubclass(w[0].category, DeprecationWarning)
+                        assert "run_custom_processor" in str(w[0].message)
+                    assert result.success is True
+
+
+class TestExtractionSchemaCRUD:
+    """Test extraction schema CRUD methods"""
+
+    @pytest.mark.asyncio
+    async def test_create_extraction_schema(self):
+        mock_response = {
+            "id": 1, "schema_id": "sch_abc123", "name": "Invoice Schema",
+            "description": "Extract invoice fields",
+            "schema_json": {"properties": {"total": {"type": "number"}}},
+            "version": 1, "version_history": None, "archived": False,
+            "created": "2026-01-01T00:00:00", "updated": "2026-01-01T00:00:00",
+        }
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                mock_req.return_value = mock_response
+                result = await client.create_extraction_schema(
+                    name="Invoice Schema",
+                    schema_json={"properties": {"total": {"type": "number"}}},
+                    description="Extract invoice fields",
+                )
+                assert isinstance(result, ExtractionSchema)
+                assert result.schema_id == "sch_abc123"
+
+    @pytest.mark.asyncio
+    async def test_list_extraction_schemas(self):
+        mock_response = {
+            "schemas": [{
+                "id": 1, "schema_id": "sch_abc123", "name": "Schema 1",
+                "description": None, "schema_json": {"properties": {}},
+                "version": 1, "version_history": None, "archived": False,
+                "created": "2026-01-01T00:00:00", "updated": "2026-01-01T00:00:00",
+            }],
+            "total": 1,
+        }
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                mock_req.return_value = mock_response
+                result = await client.list_extraction_schemas(limit=10)
+                assert result["total"] == 1
+                assert isinstance(result["schemas"][0], ExtractionSchema)
+
+    @pytest.mark.asyncio
+    async def test_delete_extraction_schema(self):
+        mock_response = {
+            "id": 1, "schema_id": "sch_abc123", "name": "Archived",
+            "description": None, "schema_json": {"properties": {}},
+            "version": 1, "version_history": None, "archived": True,
+            "created": "2026-01-01T00:00:00", "updated": "2026-01-04T00:00:00",
+        }
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                mock_req.return_value = mock_response
+                result = await client.delete_extraction_schema("sch_abc123")
+                assert isinstance(result, ExtractionSchema)
+                assert result.archived is True
+
+
+class TestPipelineCRUD:
+    """Test pipeline CRUD methods"""
+
+    @pytest.mark.asyncio
+    async def test_create_pipeline(self):
+        mock_response = {
+            "id": 1, "pipeline_id": "pl_abc123", "name": None,
+            "steps": [{"type": "convert", "settings": {}}],
+            "is_saved": False, "archived": False, "active_version": 0,
+            "created": "2026-01-01T00:00:00", "updated": "2026-01-01T00:00:00",
+        }
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                mock_req.return_value = mock_response
+                result = await client.create_pipeline(
+                    steps=[PipelineProcessor(type="convert")]
+                )
+                assert isinstance(result, PipelineConfig)
+                assert result.pipeline_id == "pl_abc123"
+                mock_req.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_list_pipelines(self):
+        mock_response = {
+            "pipelines": [{
+                "id": 1, "pipeline_id": "pl_abc123", "name": "My Pipeline",
+                "steps": [], "is_saved": True, "archived": False,
+                "active_version": 1,
+                "created": "2026-01-01T00:00:00", "updated": "2026-01-01T00:00:00",
+            }],
+            "total": 1,
+        }
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                mock_req.return_value = mock_response
+                result = await client.list_pipelines()
+                assert result["total"] == 1
+                assert isinstance(result["pipelines"][0], PipelineConfig)
+
+    @pytest.mark.asyncio
+    async def test_get_pipeline(self):
+        mock_response = {
+            "id": 1, "pipeline_id": "pl_abc123", "name": "Test",
+            "steps": [{"type": "convert", "settings": {}}],
+            "is_saved": True, "archived": False, "active_version": 1,
+            "created": "2026-01-01T00:00:00", "updated": "2026-01-01T00:00:00",
+        }
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                mock_req.return_value = mock_response
+                result = await client.get_pipeline("pl_abc123")
+                assert result.pipeline_id == "pl_abc123"
+                mock_req.assert_awaited_once_with("GET", "/api/v1/pipelines/pl_abc123")
+
+
+class TestPipelineExecution:
+    """Test pipeline execution methods"""
+
+    @pytest.mark.asyncio
+    async def test_run_pipeline(self, temp_dir):
+        pdf_file = temp_dir / "test.pdf"
+        pdf_file.write_bytes(b"%PDF-1.4\n%Test PDF content\n%%EOF\n")
+
+        mock_response = {
+            "execution_id": "pex_abc123", "pipeline_id": "pl_abc123",
+            "pipeline_version": 1, "status": "pending",
+            "steps": [
+                {"step_index": 0, "step_type": "convert", "status": "pending"},
+            ],
+            "created": "2026-01-01T00:00:00",
+        }
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_submit_with_retry", new_callable=AsyncMock) as mock_submit:
+                mock_submit.return_value = mock_response
+                result = await client.run_pipeline("pl_abc123", file_path=pdf_file)
+                assert isinstance(result, PipelineExecution)
+                assert result.execution_id == "pex_abc123"
+                assert len(result.steps) == 1
+                assert isinstance(result.steps[0], PipelineExecutionStepResult)
+
+    @pytest.mark.asyncio
+    async def test_get_pipeline_execution(self):
+        mock_response = {
+            "execution_id": "pex_abc123", "pipeline_id": "pl_abc123",
+            "pipeline_version": 1, "status": "completed",
+            "steps": [
+                {"step_index": 0, "step_type": "convert", "status": "completed",
+                 "result_url": "/api/v1/pipelines/executions/pex_abc123/steps/0/result"},
+            ],
+            "created": "2026-01-01T00:00:00",
+        }
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                mock_req.return_value = mock_response
+                result = await client.get_pipeline_execution("pex_abc123")
+                assert result.status == "completed"
+                assert result.steps[0].result_url is not None
+
+
+class TestCustomProcessorManagement:
+    """Test custom processor management methods"""
+
+    @pytest.mark.asyncio
+    async def test_list_custom_processors(self):
+        mock_response = {
+            "pipelines": [{
+                "processor_id": "cp_abc12", "name": "My Processor",
+                "status": "completed", "success": True,
+                "active_version": 1, "max_version": 2,
+                "iteration_in_progress": False,
+                "created_at": "2026-01-01T00:00:00",
+            }],
+        }
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                mock_req.return_value = mock_response
+                result = await client.list_custom_processors()
+                assert len(result["processors"]) == 1
+                assert isinstance(result["processors"][0], CustomProcessor)
+                assert result["processors"][0].processor_id == "cp_abc12"
+
+    @pytest.mark.asyncio
+    async def test_list_custom_processor_versions(self):
+        mock_response = {
+            "versions": [
+                {"version": 2, "request_description": "Add totals", "created_at": "2026-01-02T00:00:00",
+                 "runtime": 45.2, "is_active": True},
+                {"version": 1, "request_description": "Initial", "created_at": "2026-01-01T00:00:00",
+                 "runtime": 30.0, "is_active": False},
+            ],
+        }
+
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+                mock_req.return_value = mock_response
+                result = await client.list_custom_processor_versions("cp_abc12")
+                assert len(result["versions"]) == 2
+                assert isinstance(result["versions"][0], CustomProcessorVersion)
+                assert result["versions"][0].is_active is True
+
+
+class TestPipelineProcessorModel:
+    """Test PipelineProcessor model"""
+
+    def test_to_dict_minimal(self):
+        step = PipelineProcessor(type="convert")
+        d = step.to_dict()
+        assert d == {"type": "convert", "settings": {}}
+
+    def test_to_dict_with_custom_processor(self):
+        step = PipelineProcessor(
+            type="custom", settings={"mode": "fast"},
+            custom_processor_id="cp_abc12", eval_rubric_id=5,
+        )
+        d = step.to_dict()
+        assert d["custom_processor_id"] == "cp_abc12"
+        assert d["eval_rubric_id"] == 5
