@@ -1194,22 +1194,23 @@ class AsyncDatalabClient:
     async def execute_workflow(
         self,
         workflow_id: int,
-        input_config: InputConfig,
+        input_config: Optional[InputConfig] = None,
     ) -> WorkflowExecution:
         """
         Trigger a workflow execution
 
         Args:
             workflow_id: ID of the workflow to execute
-            input_config: Input configuration for the workflow
+            input_config: Optional input configuration for the workflow.
+                          If omitted, the workflow uses its default/stored input.
 
         Returns:
             WorkflowExecution object with initial status (typically "processing")
             Use get_execution_status() to check completion status
         """
-        execution_data = {
-            "input_config": input_config.to_dict(),
-        }
+        execution_data = {}
+        if input_config is not None:
+            execution_data["input_config"] = input_config.to_dict()
 
         response = await self._make_request(
             "POST",
@@ -1227,12 +1228,13 @@ class AsyncDatalabClient:
             id=execution_id,
             workflow_id=workflow_id,
             status=response.get("status", "processing"),
-            input_config=input_config.to_dict(),
+            input_config=input_config.to_dict() if input_config is not None else {},
             success=response.get("success", True),
             steps=response.get("results"),
             error=response.get("error"),
             created=response.get("created"),
             updated=response.get("updated"),
+            external_workflow_id=response.get("external_workflow_id"),
         )
 
     async def get_execution_status(
@@ -1300,6 +1302,7 @@ class AsyncDatalabClient:
                 error=error,
                 created=response.get("created"),
                 updated=response.get("updated"),
+                external_workflow_id=response.get("external_workflow_id"),
             )
 
             # If complete or failed, return immediately
