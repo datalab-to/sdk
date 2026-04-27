@@ -31,6 +31,7 @@ from datalab_sdk.models import (
     ConversionResult,
     CreateDocumentResult,
     FileResult,
+    ThumbnailResult,
     OCRResult,
     ProcessingOptions,
     ConvertOptions,
@@ -424,6 +425,7 @@ class AsyncDatalabClient:
             checkpoint_id=result_data.get("checkpoint_id"),
             versions=result_data.get("versions"),
             parse_quality_score=result_data.get("parse_quality_score"),
+            extraction_score_average=result_data.get("extraction_score_average"),
             runtime=result_data.get("runtime"),
             cost_breakdown=result_data.get("cost_breakdown"),
             evaluation=result_data.get("evaluation"),
@@ -1026,6 +1028,40 @@ class AsyncDatalabClient:
             result.save_output(output_path)
 
         return result
+
+    async def thumbnails(
+        self,
+        lookup_key: str,
+        page_range: Optional[str] = None,
+        thumb_width: int = 300,
+        track_changes: bool = False,
+    ) -> ThumbnailResult:
+        """
+        Generate thumbnail images for pages of a processed document
+
+        Args:
+            lookup_key: The request ID returned by a conversion endpoint
+            page_range: Optional page range (e.g. '0,2-4'). Defaults to all pages.
+            thumb_width: Thumbnail width in pixels (default: 300)
+            track_changes: Whether the document uses track-changes rendering (default: False)
+
+        Returns:
+            ThumbnailResult with a list of base64-encoded JPG images, one per page
+        """
+        params = f"thumb_width={thumb_width}&track_changes={str(track_changes).lower()}"
+        if page_range is not None:
+            params += f"&page_range={page_range}"
+
+        response = await self._make_request(
+            "GET",
+            f"/api/v1/thumbnails/{lookup_key}?{params}",
+        )
+
+        return ThumbnailResult(
+            success=response.get("success", False),
+            thumbnails=response.get("thumbnails"),
+            error=response.get("error"),
+        )
 
     # Workflow methods
     async def create_workflow(
@@ -2480,6 +2516,34 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+            )
+        )
+
+    def thumbnails(
+        self,
+        lookup_key: str,
+        page_range: Optional[str] = None,
+        thumb_width: int = 300,
+        track_changes: bool = False,
+    ) -> ThumbnailResult:
+        """
+        Generate thumbnail images for pages of a processed document (sync version)
+
+        Args:
+            lookup_key: The request ID returned by a conversion endpoint
+            page_range: Optional page range (e.g. '0,2-4'). Defaults to all pages.
+            thumb_width: Thumbnail width in pixels (default: 300)
+            track_changes: Whether the document uses track-changes rendering (default: False)
+
+        Returns:
+            ThumbnailResult with a list of base64-encoded JPG images, one per page
+        """
+        return self._run_async(
+            self._async_client.thumbnails(
+                lookup_key=lookup_key,
+                page_range=page_range,
+                thumb_width=thumb_width,
+                track_changes=track_changes,
             )
         )
 

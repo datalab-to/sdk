@@ -199,6 +199,7 @@ class ConversionResult:
     checkpoint_id: Optional[str] = None
     versions: Optional[Union[Dict[str, Any], str]] = None
     parse_quality_score: Optional[float] = None
+    extraction_score_average: Optional[float] = None
     runtime: Optional[float] = None
     cost_breakdown: Optional[Dict[str, Any]] = None
     evaluation: Optional[Dict[str, Any]] = None  # Evaluation results when run_eval=true
@@ -539,6 +540,25 @@ class FileResult:
     status: str
     output_path: Path
     error: Optional[str] = None
+
+
+@dataclass
+class ThumbnailResult:
+    """Result from the /thumbnails/{lookup_key} endpoint"""
+
+    success: bool
+    thumbnails: Optional[List[str]] = None  # Base64-encoded JPG images, one per page
+    error: Optional[str] = None
+
+    def save_output(self, output_dir: Union[str, Path], prefix: str = "page") -> None:
+        """Save thumbnails to files in output_dir"""
+        if not self.thumbnails:
+            raise ValueError("No thumbnails available to save")
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        for i, thumb_b64 in enumerate(self.thumbnails):
+            with open(output_dir / f"{prefix}_{i}.jpg", "wb") as f:
+                f.write(base64.b64decode(thumb_b64))
 
 
 # --- Extraction Schema models ---
