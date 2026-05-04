@@ -424,6 +424,7 @@ class AsyncDatalabClient:
             checkpoint_id=result_data.get("checkpoint_id"),
             versions=result_data.get("versions"),
             parse_quality_score=result_data.get("parse_quality_score"),
+            extraction_score_average=result_data.get("extraction_score_average"),
             runtime=result_data.get("runtime"),
             cost_breakdown=result_data.get("cost_breakdown"),
             evaluation=result_data.get("evaluation"),
