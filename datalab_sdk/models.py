@@ -199,6 +199,7 @@ class ConversionResult:
     checkpoint_id: Optional[str] = None
     versions: Optional[Union[Dict[str, Any], str]] = None
     parse_quality_score: Optional[float] = None
+    extraction_score_average: Optional[float] = None  # avg confidence score (1-5) across extracted fields
     runtime: Optional[float] = None
     cost_breakdown: Optional[Dict[str, Any]] = None
     evaluation: Optional[Dict[str, Any]] = None  # Evaluation results when run_eval=true
