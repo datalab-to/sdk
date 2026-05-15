@@ -83,7 +83,8 @@ class ExtractOptions(ProcessingOptions):
     schema_id: Optional[str] = None  # ID of a saved extraction schema (e.g. sch_k8Hx9mP2nQ4v). Mutually exclusive with page_schema.
     schema_version: Optional[int] = None  # Version of the schema. Only valid with schema_id.
     checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
-    mode: str = "fast"  # fast, balanced, accurate
+    mode: str = "fast"  # Parse mode: fast, balanced, accurate
+    extraction_mode: Optional[str] = None  # Extraction mode: "balanced" (default) or "accurate"
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
@@ -94,6 +95,9 @@ class ExtractOptions(ProcessingOptions):
         # When using schema_id, suppress the empty default page_schema
         if self.schema_id and not self.page_schema:
             form_data.pop("page_schema", None)
+        # Only send extraction_mode if explicitly set
+        if self.extraction_mode is None:
+            form_data.pop("extraction_mode", None)
         return form_data
 
 
