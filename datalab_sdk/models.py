@@ -623,6 +623,7 @@ class PipelineExecutionStepResult:
     started_at: Optional[str] = None
     finished_at: Optional[str] = None
     error_message: Optional[str] = None
+    source_step_type: Optional[str] = None  # For eval steps: which step this evaluates
     checkpoint_id: Optional[str] = None
 
 
