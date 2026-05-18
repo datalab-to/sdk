@@ -2042,6 +2042,7 @@ class AsyncDatalabClient:
                 started_at=s.get("started_at"),
                 finished_at=s.get("finished_at"),
                 error_message=s.get("error_message"),
+                source_step_type=s.get("source_step_type"),
                 checkpoint_id=s.get("checkpoint_id"),
             )
             for s in data.get("steps", [])
