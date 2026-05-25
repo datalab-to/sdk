@@ -1910,6 +1910,7 @@ class AsyncDatalabClient:
         skip_cache: bool = False,
         webhook_url: Optional[str] = None,
         version: Optional[int] = None,
+        processing_location: Optional[str] = None,
         max_polls: int = 1,
         poll_interval: int = 1,
     ) -> PipelineExecution:
@@ -1926,6 +1927,7 @@ class AsyncDatalabClient:
             skip_cache: Skip executor cache
             webhook_url: URL to POST when complete
             version: Pipeline version to execute (0=draft, omit=active)
+            processing_location: Processing location override
             max_polls: Maximum polling attempts after submission (default: 1)
             poll_interval: Seconds between polls
         """
@@ -1942,6 +1944,8 @@ class AsyncDatalabClient:
             form_data.add_field("webhook_url", webhook_url)
         if version is not None:
             form_data.add_field("version", str(version))
+        if processing_location is not None:
+            form_data.add_field("processing_location", processing_location)
 
         response = await self._submit_with_retry(
             f"/api/v1/pipelines/{pipeline_id}/run", data=form_data
@@ -2043,6 +2047,7 @@ class AsyncDatalabClient:
                 finished_at=s.get("finished_at"),
                 error_message=s.get("error_message"),
                 checkpoint_id=s.get("checkpoint_id"),
+                source_step_type=s.get("source_step_type"),
             )
             for s in data.get("steps", [])
         ]
@@ -2800,6 +2805,7 @@ class DatalabClient:
         skip_cache: bool = False,
         webhook_url: Optional[str] = None,
         version: Optional[int] = None,
+        processing_location: Optional[str] = None,
         max_polls: int = 1,
         poll_interval: int = 1,
     ) -> PipelineExecution:
@@ -2810,6 +2816,7 @@ class DatalabClient:
                 page_range=page_range, output_format=output_format,
                 run_evals=run_evals, skip_cache=skip_cache,
                 webhook_url=webhook_url, version=version,
+                processing_location=processing_location,
                 max_polls=max_polls, poll_interval=poll_interval,
             )
         )

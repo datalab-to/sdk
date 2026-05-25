@@ -567,7 +567,7 @@ class ExtractionSchema:
 class PipelineProcessor:
     """Configuration for a single processor within a pipeline"""
 
-    type: str  # convert, extract, segment, custom
+    type: str  # convert, extract, segment, custom, fill
     settings: Dict[str, Any] = field(default_factory=dict)
     custom_processor_id: Optional[str] = None  # For custom steps (cp_XXXXX)
     eval_rubric_id: Optional[int] = None
@@ -624,6 +624,7 @@ class PipelineExecutionStepResult:
     finished_at: Optional[str] = None
     error_message: Optional[str] = None
     checkpoint_id: Optional[str] = None
+    source_step_type: Optional[str] = None  # For eval steps: which step this evaluates
 
 
 @dataclass
