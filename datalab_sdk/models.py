@@ -15,6 +15,7 @@ class ProcessingOptions:
     max_pages: Optional[int] = None
     skip_cache: bool = False
     page_range: Optional[str] = None
+    processing_location: Optional[str] = None
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -201,6 +202,9 @@ class ConversionResult:
     parse_quality_score: Optional[float] = None
     runtime: Optional[float] = None
     cost_breakdown: Optional[Dict[str, Any]] = None
+    total_cost: Optional[int] = None  # Total cost in credits
+    extraction_score_average: Optional[float] = None  # Average extraction field score
+    extraction_mode: Optional[str] = None  # Extraction mode used ("balanced" or "accurate")
     evaluation: Optional[Dict[str, Any]] = None  # Evaluation results when run_eval=true
 
     def save_output(
