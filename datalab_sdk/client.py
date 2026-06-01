@@ -426,6 +426,9 @@ class AsyncDatalabClient:
             parse_quality_score=result_data.get("parse_quality_score"),
             runtime=result_data.get("runtime"),
             cost_breakdown=result_data.get("cost_breakdown"),
+            total_cost=result_data.get("total_cost"),
+            extraction_score_average=result_data.get("extraction_score_average"),
+            extraction_mode=result_data.get("extraction_mode"),
             evaluation=result_data.get("evaluation"),
         )
 
