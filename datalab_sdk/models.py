@@ -84,7 +84,7 @@ class ExtractOptions(ProcessingOptions):
     schema_version: Optional[int] = None  # Version of the schema. Only valid with schema_id.
     checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
     mode: str = "fast"  # Parse mode: fast, balanced, accurate
-    extraction_mode: Optional[str] = None  # Extraction mode: "fast" (single-pass) or "balanced" (multi-pass, default). Resolved server-side when unset.
+    extraction_mode: Optional[str] = None  # Extraction mode: "fast" or "balanced" (default). Resolved server-side when unset.
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
