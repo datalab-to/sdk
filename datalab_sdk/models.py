@@ -15,6 +15,7 @@ class ProcessingOptions:
     max_pages: Optional[int] = None
     skip_cache: bool = False
     page_range: Optional[str] = None
+    processing_location: Optional[str] = None  # Optional residency region override (e.g. "us", "eu")
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -53,6 +54,7 @@ class ConvertOptions(ProcessingOptions):
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
     token_efficient_markdown: bool = False  # optimize markdown for LLM token usage
+    word_bboxes: bool = False  # predict per-word bounding boxes (beta, included under page_info[id].metadata.words)
     eval_rubric_id: Optional[int] = None  # run evaluation rubric after conversion
 
     def to_form_data(self) -> Dict[str, Any]:
@@ -193,6 +195,8 @@ class ConversionResult:
     json: Optional[Dict[str, Any]] = None
     chunks: Optional[Dict[str, Any]] = None
     extraction_schema_json: Optional[str] = None
+    extraction_score_average: Optional[float] = None  # average confidence score (1-5) across extracted fields
+    extraction_mode: Optional[str] = None  # extraction mode used: "fast" or "balanced"
     segmentation_results: Optional[Dict[str, Any]] = None
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None

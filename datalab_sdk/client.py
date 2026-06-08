@@ -414,6 +414,8 @@ class AsyncDatalabClient:
             json=result_data.get("json"),
             chunks=result_data.get("chunks"),
             extraction_schema_json=result_data.get("extraction_schema_json"),
+            extraction_score_average=result_data.get("extraction_score_average"),
+            extraction_mode=result_data.get("extraction_mode"),
             segmentation_results=result_data.get("segmentation_results"),
             images=result_data.get("images"),
             metadata=result_data.get("metadata"),
