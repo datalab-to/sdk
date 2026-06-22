@@ -714,7 +714,7 @@ def create_workflow(
         # Create workflow
         client = DatalabClient(api_key=api_key, base_url=base_url)
         workflow = client.create_workflow(
-            name=name, team_id=team_id, steps=workflow_steps
+            name=name, steps=workflow_steps
         )
 
         click.echo("Workflow created successfully!")
