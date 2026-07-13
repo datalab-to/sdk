@@ -54,6 +54,7 @@ class ConvertOptions(ProcessingOptions):
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
     token_efficient_markdown: bool = False  # optimize markdown for LLM token usage
     eval_rubric_id: Optional[int] = None  # run evaluation rubric after conversion
+    word_bboxes: bool = False  # predict per-word bounding boxes with confidence scores (HTML only)
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -83,7 +84,8 @@ class ExtractOptions(ProcessingOptions):
     schema_id: Optional[str] = None  # ID of a saved extraction schema (e.g. sch_k8Hx9mP2nQ4v). Mutually exclusive with page_schema.
     schema_version: Optional[int] = None  # Version of the schema. Only valid with schema_id.
     checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
-    mode: str = "fast"  # fast, balanced, accurate
+    mode: Optional[str] = None  # Parse mode: fast, balanced, accurate. When None, defaults to 'accurate' for balanced extraction and 'fast' otherwise.
+    extraction_mode: Optional[str] = None  # Extraction mode: "turbo", "fast", or "balanced". Defaults to "balanced".
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
@@ -94,6 +96,9 @@ class ExtractOptions(ProcessingOptions):
         # When using schema_id, suppress the empty default page_schema
         if self.schema_id and not self.page_schema:
             form_data.pop("page_schema", None)
+        # Only send extraction_mode if explicitly set
+        if self.extraction_mode is None:
+            form_data.pop("extraction_mode", None)
         return form_data
 
 
@@ -159,6 +164,7 @@ class FormFillingOptions(ProcessingOptions):
     field_data: Dict[str, Dict[str, str]] = field(default_factory=dict)
     context: Optional[str] = None  # Optional context to guide form filling
     confidence_threshold: float = 0.5  # Minimum confidence for field matching (0.0-1.0)
+    webhook_url: Optional[str] = None  # Optional webhook URL to call when the request is complete
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -202,6 +208,9 @@ class ConversionResult:
     runtime: Optional[float] = None
     cost_breakdown: Optional[Dict[str, Any]] = None
     evaluation: Optional[Dict[str, Any]] = None  # Evaluation results when run_eval=true
+    extraction_score_average: Optional[float] = None  # Average confidence score (1-5) across extracted fields
+    extraction_mode: Optional[str] = None  # Extraction mode used: turbo, fast, or balanced
+    segmentation_schema: Optional[str] = None  # Segmentation schema echoed back from the API
 
     def save_output(
         self, output_path: Union[str, Path], save_images: bool = True

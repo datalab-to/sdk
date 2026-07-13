@@ -427,6 +427,9 @@ class AsyncDatalabClient:
             runtime=result_data.get("runtime"),
             cost_breakdown=result_data.get("cost_breakdown"),
             evaluation=result_data.get("evaluation"),
+            extraction_score_average=result_data.get("extraction_score_average"),
+            extraction_mode=result_data.get("extraction_mode"),
+            segmentation_schema=result_data.get("segmentation_schema"),
         )
 
     async def _submit_and_poll(
