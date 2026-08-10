@@ -15,6 +15,7 @@ class ProcessingOptions:
     max_pages: Optional[int] = None
     skip_cache: bool = False
     page_range: Optional[str] = None
+    processing_location: Optional[str] = None  # e.g. "us" or "eu"; overrides team default residency
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -48,12 +49,14 @@ class ConvertOptions(ProcessingOptions):
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
     # Comma-separated list of extra features: 'track_changes', 'chart_understanding',
-    # 'table_row_bboxes', 'extract_links', 'infographic', 'new_block_types'
+    # 'table_cell_bboxes', 'list_item_bboxes', 'extract_links', 'infographic', 'new_block_types'
     extras: Optional[str] = None
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
     token_efficient_markdown: bool = False  # optimize markdown for LLM token usage
     eval_rubric_id: Optional[int] = None  # run evaluation rubric after conversion
+    word_bboxes: bool = False  # predict per-word bounding boxes with confidence scores
+    merge_cross_page: bool = False  # merge tables/paragraphs/lists split across pages (variable cost surcharge)
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -84,7 +87,7 @@ class ExtractOptions(ProcessingOptions):
     schema_version: Optional[int] = None  # Version of the schema. Only valid with schema_id.
     checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
     mode: str = "fast"  # Parse mode: fast, balanced, accurate
-    extraction_mode: Optional[str] = None  # Extraction mode: "fast" or "balanced". Defaults to "balanced".
+    extraction_mode: Optional[str] = None  # Extraction mode: "turbo", "fast", "balanced", or "accurate". Defaults to "balanced".
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
@@ -206,6 +209,9 @@ class ConversionResult:
     runtime: Optional[float] = None
     cost_breakdown: Optional[Dict[str, Any]] = None
     evaluation: Optional[Dict[str, Any]] = None  # Evaluation results when run_eval=true
+    extraction_mode: Optional[str] = None  # Extraction mode used: 'turbo', 'fast', 'balanced', or 'accurate'
+    extraction_score_average: Optional[float] = None  # Average confidence score (1-5) across extracted fields
+    segmentation_schema: Optional[str] = None  # Segmentation schema echoed back from /segment requests
 
     def save_output(
         self, output_path: Union[str, Path], save_images: bool = True
