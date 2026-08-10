@@ -427,6 +427,9 @@ class AsyncDatalabClient:
             runtime=result_data.get("runtime"),
             cost_breakdown=result_data.get("cost_breakdown"),
             evaluation=result_data.get("evaluation"),
+            extraction_mode=result_data.get("extraction_mode"),
+            extraction_score_average=result_data.get("extraction_score_average"),
+            segmentation_schema=result_data.get("segmentation_schema"),
         )
 
     async def _submit_and_poll(
@@ -801,6 +804,7 @@ class AsyncDatalabClient:
         markdown: str,
         output_format: str = "docx",
         webhook_url: Optional[str] = None,
+        processing_location: Optional[str] = None,
         save_output: Optional[Union[str, Path]] = None,
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
@@ -818,6 +822,7 @@ class AsyncDatalabClient:
             markdown: The markdown content to convert to a document
             output_format: Output format (currently only 'docx')
             webhook_url: Optional webhook URL for completion notification
+            processing_location: Optional residency region override (e.g. "us" or "eu")
             save_output: Optional path to save the output file
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
@@ -838,6 +843,8 @@ class AsyncDatalabClient:
         }
         if webhook_url:
             payload["webhook_url"] = webhook_url
+        if processing_location is not None:
+            payload["processing_location"] = processing_location
 
         initial_data = await self._submit_with_retry(
             "/api/v1/create-document",
@@ -2395,6 +2402,7 @@ class DatalabClient:
         markdown: str,
         output_format: str = "docx",
         webhook_url: Optional[str] = None,
+        processing_location: Optional[str] = None,
         save_output: Optional[Union[str, Path]] = None,
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
@@ -2407,6 +2415,7 @@ class DatalabClient:
             markdown: The markdown content to convert to a document
             output_format: Output format (currently only 'docx')
             webhook_url: Optional webhook URL for completion notification
+            processing_location: Optional residency region override (e.g. "us" or "eu")
             save_output: Optional path to save the output file
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
@@ -2417,6 +2426,7 @@ class DatalabClient:
                 markdown=markdown,
                 output_format=output_format,
                 webhook_url=webhook_url,
+                processing_location=processing_location,
                 save_output=save_output,
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
