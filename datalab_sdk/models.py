@@ -15,6 +15,7 @@ class ProcessingOptions:
     max_pages: Optional[int] = None
     skip_cache: bool = False
     page_range: Optional[str] = None
+    processing_location: Optional[str] = None  # Data residency region (e.g. "us", "eu")
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -38,17 +39,19 @@ class ConvertOptions(ProcessingOptions):
     """Options for document conversion via /convert endpoint"""
 
     paginate: bool = False
+    merge_cross_page: bool = False  # merge split tables/paragraphs/lists across pages
     disable_image_extraction: bool = False
     disable_image_captions: bool = False
     fence_synthetic_captions: bool = False
+    word_bboxes: bool = False  # per-word bounding boxes (beta, access-gated)
     additional_config: Optional[Dict[str, Any]] = None
     save_checkpoint: bool = False
     output_format: str = "markdown"  # markdown, json, html, chunks (comma-separated for multiple)
     mode: str = "fast"  # fast, balanced, accurate
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
-    # Comma-separated list of extra features: 'track_changes', 'chart_understanding',
-    # 'table_row_bboxes', 'extract_links', 'infographic', 'new_block_types'
+    # Comma-separated extras: 'track_changes', 'chart_understanding', 'table_cell_bboxes',
+    # 'list_item_bboxes', 'extract_links', 'extract_bookmarks', 'infographic', 'new_block_types'
     extras: Optional[str] = None
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
@@ -84,7 +87,7 @@ class ExtractOptions(ProcessingOptions):
     schema_version: Optional[int] = None  # Version of the schema. Only valid with schema_id.
     checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
     mode: str = "fast"  # Parse mode: fast, balanced, accurate
-    extraction_mode: Optional[str] = None  # Extraction mode: "fast" or "balanced". Defaults to "balanced".
+    extraction_mode: Optional[str] = None  # turbo (image-only), fast, balanced, or accurate
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
@@ -163,6 +166,7 @@ class FormFillingOptions(ProcessingOptions):
     field_data: Dict[str, Dict[str, str]] = field(default_factory=dict)
     context: Optional[str] = None  # Optional context to guide form filling
     confidence_threshold: float = 0.5  # Minimum confidence for field matching (0.0-1.0)
+    webhook_url: Optional[str] = None
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -193,7 +197,10 @@ class ConversionResult:
     json: Optional[Dict[str, Any]] = None
     chunks: Optional[Dict[str, Any]] = None
     extraction_schema_json: Optional[str] = None
+    extraction_score_average: Optional[float] = None  # 1-5 average confidence per extracted field
+    extraction_mode: Optional[str] = None  # turbo, fast, balanced, or accurate
     segmentation_results: Optional[Dict[str, Any]] = None
+    segmentation_schema: Optional[str] = None  # JSON string of the segmentation schema used
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
