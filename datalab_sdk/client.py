@@ -28,6 +28,8 @@ from datalab_sdk.exceptions import (
 )
 from datalab_sdk.mimetypes import MIMETYPE_MAP
 from datalab_sdk.models import (
+    AgentOptions,
+    AgentResult,
     ConversionResult,
     CreateDocumentResult,
     FileResult,
@@ -1021,6 +1023,97 @@ class AsyncDatalabClient:
 
         # Save output if requested
         if save_output and result.success and result.output_base64:
+            output_path = Path(save_output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            result.save_output(output_path)
+
+        return result
+
+    @staticmethod
+    def _build_agent_result(data: Dict[str, Any]) -> AgentResult:
+        """Build an AgentResult from API response data"""
+        return AgentResult(
+            status=data.get("status", "complete"),
+            success=data.get("success"),
+            error=data.get("error"),
+            output_shape=data.get("output_shape"),
+            finished=data.get("finished"),
+            turns=data.get("turns"),
+            markdown=data.get("markdown"),
+            html=data.get("html"),
+            json=data.get("json"),
+            chunks=data.get("chunks"),
+            extraction_schema_json=data.get("extraction_schema_json"),
+            segments=data.get("segments"),
+            metadata=data.get("metadata"),
+            verdict=data.get("verdict"),
+            jats_xml=data.get("jats_xml"),
+            accessible_pdf=data.get("accessible_pdf"),
+            images=data.get("images"),
+            verifier_metrics=data.get("verifier_metrics"),
+            page_count=data.get("page_count"),
+            cost_breakdown=data.get("cost_breakdown"),
+            parse_quality_score=data.get("parse_quality_score"),
+            runtime=data.get("runtime"),
+            versions=data.get("versions"),
+        )
+
+    async def agent(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[AgentOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[AgentResult, FileResult]:
+        """
+        Run a document agent on a file
+
+        Provide a prompt for ad-hoc tasks, or a processor address (e.g. 'cp_abc123')
+        to run a published agent contract. These are mutually exclusive.
+
+        Args:
+            file_path: Path to the file to process
+            file_url: URL of the file to process
+            options: Agent options (must include prompt or processor)
+            save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        if save_output and stream_response_to:
+            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
+
+        resolved_stream_response_to = None
+        if stream_response_to:
+            resolved_stream_response_to = Path(stream_response_to)
+            if not resolved_stream_response_to.parent.is_dir():
+                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+
+        if options is None:
+            raise ValueError("options must be provided with prompt or processor")
+
+        if not options.prompt and not options.processor:
+            raise ValueError("Either options.prompt or options.processor must be provided")
+
+        result_data = await self._submit_and_poll(
+            "/api/v1/agent",
+            data=self.get_form_params(
+                file_path=file_path, file_url=file_url, options=options
+            ),
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
+        )
+
+        if isinstance(result_data, FileResult):
+            return result_data
+
+        result = self._build_agent_result(result_data)
+
+        if save_output and result.success:
             output_path = Path(save_output)
             output_path.parent.mkdir(parents=True, exist_ok=True)
             result.save_output(output_path)
@@ -2473,6 +2566,43 @@ class DatalabClient:
         """
         return self._run_async(
             self._async_client.fill(
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                save_output=save_output,
+                stream_response_to=stream_response_to,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def agent(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[AgentOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[AgentResult, FileResult]:
+        """
+        Run a document agent on a file (sync version)
+
+        Provide a prompt for ad-hoc tasks, or a processor address (e.g. 'cp_abc123')
+        to run a published agent contract. These are mutually exclusive.
+
+        Args:
+            file_path: Path to the file to process
+            file_url: URL of the file to process
+            options: Agent options (must include prompt or processor)
+            save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        return self._run_async(
+            self._async_client.agent(
                 file_path=file_path,
                 file_url=file_url,
                 options=options,

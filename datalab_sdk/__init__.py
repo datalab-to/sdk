@@ -8,6 +8,8 @@ supporting document conversion, extraction, segmentation, and more.
 from .client import DatalabClient, AsyncDatalabClient
 from .exceptions import DatalabError, DatalabAPIError, DatalabTimeoutError
 from .models import (
+    AgentOptions,
+    AgentResult,
     ConversionResult,
     CreateDocumentResult,
     FileResult,
@@ -44,6 +46,8 @@ __all__ = [
     "DatalabError",
     "DatalabAPIError",
     "DatalabTimeoutError",
+    "AgentOptions",
+    "AgentResult",
     "ConversionResult",
     "CreateDocumentResult",
     "FileResult",
