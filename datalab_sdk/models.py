@@ -15,6 +15,7 @@ class ProcessingOptions:
     max_pages: Optional[int] = None
     skip_cache: bool = False
     page_range: Optional[str] = None
+    processing_location: Optional[str] = None  # Optional residency region override (e.g. "us", "eu")
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -53,6 +54,9 @@ class ConvertOptions(ProcessingOptions):
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
     token_efficient_markdown: bool = False  # optimize markdown for LLM token usage
+    merge_cross_page: bool = False  # merge tables/paragraphs/lists split across pages (billed surcharge)
+    word_bboxes: bool = False  # predict per-word bounding boxes with confidence scores
+    disable_html_prettify: bool = False  # disable indentation of HTML output; set True for compact HTML
     eval_rubric_id: Optional[int] = None  # run evaluation rubric after conversion
 
     def to_form_data(self) -> Dict[str, Any]:
@@ -83,7 +87,8 @@ class ExtractOptions(ProcessingOptions):
     schema_id: Optional[str] = None  # ID of a saved extraction schema (e.g. sch_k8Hx9mP2nQ4v). Mutually exclusive with page_schema.
     schema_version: Optional[int] = None  # Version of the schema. Only valid with schema_id.
     checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
-    mode: str = "fast"  # fast, balanced, accurate
+    mode: str = "fast"  # Parse mode: fast, balanced, accurate
+    extraction_mode: Optional[str] = None  # Extraction mode: "turbo", "fast", "balanced", or "accurate". Defaults to team setting (usually "balanced").
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
@@ -94,6 +99,9 @@ class ExtractOptions(ProcessingOptions):
         # When using schema_id, suppress the empty default page_schema
         if self.schema_id and not self.page_schema:
             form_data.pop("page_schema", None)
+        # Only send extraction_mode if explicitly set
+        if self.extraction_mode is None:
+            form_data.pop("extraction_mode", None)
         return form_data
 
 
@@ -122,6 +130,7 @@ class CustomProcessorOptions(ProcessingOptions):
     include_markdown_in_chunks: bool = False  # Include markdown field in chunks/JSON output
     disable_image_extraction: bool = False  # Disable image extraction from the document
     disable_image_captions: bool = False  # Disable synthetic image captions/descriptions
+    disable_html_prettify: bool = False  # Disable indentation of HTML output; set True for compact HTML
     webhook_url: Optional[str] = None
 
     @property
@@ -673,3 +682,99 @@ class CustomProcessorVersion:
     created_at: Optional[str] = None
     runtime: Optional[float] = None
     is_active: bool = False
+
+
+# --- Agent models ---
+
+
+@dataclass
+class AgentOptions:
+    """Options for the document agent via /agent endpoint"""
+
+    prompt: Optional[str] = None  # Instruction describing what the agent should do. Required unless processor is set.
+    processor: Optional[str] = None  # Published agent processor address, e.g. 'cp_abc123' or 'cp_abc123@2.0'. Mutually exclusive with prompt/output_schema/profile/system_prompt_extra.
+    output_shape: str = "parse"  # parse, json, wcag, jats, or segment
+    output_schema: Optional[str] = None  # JSON schema string for structured output. Only used when output_shape='json'.
+    return_images: bool = False  # Return run images inline as base64
+    system_prompt_extra: Optional[str] = None  # Additional content appended to the agent's system prompt
+    profile: Optional[str] = None  # Named TaskProfile, e.g. 'jats', 'wcag'
+    verification_effort: str = "fast"  # fast, balanced, or accurate
+    skip_cache: bool = False
+    webhook_url: Optional[str] = None
+    processing_location: Optional[str] = None  # Optional residency region override (e.g. "us", "eu")
+
+    def to_form_data(self) -> Dict[str, Any]:
+        """Convert to form data format for API requests"""
+        form_data: Dict[str, Any] = {}
+        if self.prompt is not None:
+            form_data["prompt"] = (None, self.prompt)
+        if self.processor is not None:
+            form_data["processor"] = (None, self.processor)
+        form_data["output_shape"] = (None, self.output_shape)
+        if self.output_schema is not None:
+            form_data["output_schema"] = (None, self.output_schema)
+        form_data["return_images"] = (None, self.return_images)
+        if self.system_prompt_extra is not None:
+            form_data["system_prompt_extra"] = (None, self.system_prompt_extra)
+        if self.profile is not None:
+            form_data["profile"] = (None, self.profile)
+        form_data["verification_effort"] = (None, self.verification_effort)
+        form_data["skip_cache"] = (None, self.skip_cache)
+        if self.webhook_url is not None:
+            form_data["webhook_url"] = (None, self.webhook_url)
+        if self.processing_location is not None:
+            form_data["processing_location"] = (None, self.processing_location)
+        return form_data
+
+
+@dataclass
+class AgentResult:
+    """Result from the /agent endpoint"""
+
+    status: str
+    success: Optional[bool] = None
+    error: Optional[str] = None
+    output_shape: Optional[str] = None  # parse, json, wcag, jats, or segment
+    finished: Optional[bool] = None  # Whether the agent finished before hitting max_turns
+    turns: Optional[int] = None
+    markdown: Optional[str] = None
+    html: Optional[str] = None
+    json: Optional[Dict[str, Any]] = None
+    chunks: Optional[Dict[str, Any]] = None
+    extraction_schema_json: Optional[Union[Dict[str, Any], str]] = None
+    segments: Optional[List[Dict[str, Any]]] = None  # Segment records for 'segment' output shape
+    metadata: Optional[Dict[str, Any]] = None
+    verdict: Optional[str] = None
+    jats_xml: Optional[str] = None  # JATS 1.2 XML for 'jats' output shape
+    accessible_pdf: Optional[str] = None  # Base64 PDF/UA-1 for 'wcag' output shape
+    images: Optional[Dict[str, Any]] = None  # Base64 images keyed by name (when return_images=True)
+    verifier_metrics: Optional[List[Dict[str, Any]]] = None
+    page_count: Optional[int] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
+    parse_quality_score: Optional[float] = None
+    runtime: Optional[float] = None
+    versions: Optional[Union[Dict[str, Any], str]] = None
+
+    def save_output(self, output_path: Union[str, Path]) -> None:
+        """Save the agent output to files"""
+        output_path = Path(output_path)
+
+        if self.markdown:
+            with open(output_path.with_suffix(".md"), "w", encoding="utf-8") as f:
+                f.write(self.markdown)
+
+        if self.html:
+            with open(output_path.with_suffix(".html"), "w", encoding="utf-8") as f:
+                f.write(self.html)
+
+        if self.json:
+            with open(output_path.with_suffix(".json"), "w", encoding="utf-8") as f:
+                json.dump(self.json, f, indent=2)
+
+        if self.jats_xml:
+            with open(output_path.with_suffix(".xml"), "w", encoding="utf-8") as f:
+                f.write(self.jats_xml)
+
+        if self.accessible_pdf:
+            with open(output_path.with_suffix(".pdf"), "wb") as f:
+                f.write(base64.b64decode(self.accessible_pdf))
