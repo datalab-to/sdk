@@ -15,6 +15,7 @@ class ProcessingOptions:
     max_pages: Optional[int] = None
     skip_cache: bool = False
     page_range: Optional[str] = None
+    processing_location: Optional[str] = None  # Residency region override (e.g. "us", "eu")
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -38,9 +39,13 @@ class ConvertOptions(ProcessingOptions):
     """Options for document conversion via /convert endpoint"""
 
     paginate: bool = False
+    merge_cross_page: bool = False  # Merge tables/paragraphs/lists split across pages (billed as compute surcharge)
     disable_image_extraction: bool = False
     disable_image_captions: bool = False
     fence_synthetic_captions: bool = False
+    disable_html_prettify: bool = False  # Disable HTML indentation (avoids extra whitespace around inline tags)
+    exact_transcription: bool = False  # Keep typos/abbreviations/formatting exactly as printed
+    word_bboxes: bool = False  # Predict per-word bounding boxes with confidence scores
     additional_config: Optional[Dict[str, Any]] = None
     save_checkpoint: bool = False
     output_format: str = "markdown"  # markdown, json, html, chunks (comma-separated for multiple)
@@ -48,7 +53,8 @@ class ConvertOptions(ProcessingOptions):
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
     # Comma-separated list of extra features: 'track_changes', 'chart_understanding',
-    # 'table_row_bboxes', 'extract_links', 'infographic', 'new_block_types'
+    # 'table_cell_bboxes', 'list_item_bboxes', 'extract_links', 'extract_bookmarks',
+    # 'infographic', 'new_block_types'
     extras: Optional[str] = None
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
@@ -83,7 +89,8 @@ class ExtractOptions(ProcessingOptions):
     schema_id: Optional[str] = None  # ID of a saved extraction schema (e.g. sch_k8Hx9mP2nQ4v). Mutually exclusive with page_schema.
     schema_version: Optional[int] = None  # Version of the schema. Only valid with schema_id.
     checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
-    mode: str = "fast"  # fast, balanced, accurate
+    mode: str = "fast"  # Parse mode: fast, balanced, accurate
+    extraction_mode: Optional[str] = None  # Extraction mode: "turbo", "fast", "balanced", or "accurate". Defaults to "balanced".
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
@@ -94,6 +101,9 @@ class ExtractOptions(ProcessingOptions):
         # When using schema_id, suppress the empty default page_schema
         if self.schema_id and not self.page_schema:
             form_data.pop("page_schema", None)
+        # Only send extraction_mode if explicitly set
+        if self.extraction_mode is None:
+            form_data.pop("extraction_mode", None)
         return form_data
 
 
@@ -119,6 +129,8 @@ class CustomProcessorOptions(ProcessingOptions):
     output_format: str = "markdown"  # markdown, json, html, chunks
     paginate: bool = False  # Separate pages with horizontal rules containing page numbers
     add_block_ids: bool = False  # Add data-block-id attributes to HTML elements
+    disable_html_prettify: bool = False  # Disable HTML indentation (avoids extra whitespace around inline tags)
+    exact_transcription: bool = False  # Keep typos/abbreviations/formatting exactly as printed
     include_markdown_in_chunks: bool = False  # Include markdown field in chunks/JSON output
     disable_image_extraction: bool = False  # Disable image extraction from the document
     disable_image_captions: bool = False  # Disable synthetic image captions/descriptions
@@ -189,7 +201,11 @@ class ConversionResult:
     json: Optional[Dict[str, Any]] = None
     chunks: Optional[Dict[str, Any]] = None
     extraction_schema_json: Optional[str] = None
+    extraction_score_average: Optional[float] = None  # Average confidence score (0-5) across extracted fields
+    extraction_scoring_status: Optional[str] = None  # "complete", "partial", or "failed"
+    extraction_mode: Optional[str] = None  # "turbo", "fast", "balanced", or "accurate"
     segmentation_results: Optional[Dict[str, Any]] = None
+    segmentation_schema: Optional[str] = None  # Segmentation schema echoed back from the request
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
