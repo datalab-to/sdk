@@ -287,7 +287,8 @@ def process_documents(
 
         if api_key is None:
             raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
+                "Get a free API key at https://www.datalab.to/app/keys"
             )
 
         if base_url is None:
@@ -637,7 +638,8 @@ def create_document(
 
         if api_key is None:
             raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
+                "Get a free API key at https://www.datalab.to/app/keys"
             )
 
         # Check if markdown_input is a file path
@@ -689,7 +691,8 @@ def create_workflow(
 
         if api_key is None:
             raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
+                "Get a free API key at https://www.datalab.to/app/keys"
             )
 
         # Parse steps from JSON string or file
@@ -743,7 +746,8 @@ def get_workflow(workflow_id: int, api_key: Optional[str], base_url: str):
 
         if api_key is None:
             raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
+                "Get a free API key at https://www.datalab.to/app/keys"
             )
 
         client = DatalabClient(api_key=api_key, base_url=base_url)
@@ -779,7 +783,8 @@ def get_step_types(api_key: Optional[str], base_url: str):
 
         if api_key is None:
             raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
+                "Get a free API key at https://www.datalab.to/app/keys"
             )
 
         client = DatalabClient(api_key=api_key, base_url=base_url)
@@ -820,7 +825,8 @@ def list_workflows(api_key: Optional[str], base_url: str):
 
         if api_key is None:
             raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
+                "Get a free API key at https://www.datalab.to/app/keys"
             )
 
         client = DatalabClient(api_key=api_key, base_url=base_url)
@@ -866,7 +872,8 @@ def execute_workflow(
 
         if api_key is None:
             raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
+                "Get a free API key at https://www.datalab.to/app/keys"
             )
 
         # Parse input_config from JSON string or file
@@ -952,7 +959,8 @@ def get_execution_status(
 
         if api_key is None:
             raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable."
+                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
+                "Get a free API key at https://www.datalab.to/app/keys"
             )
 
         client = DatalabClient(api_key=api_key, base_url=base_url)
