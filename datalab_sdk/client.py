@@ -94,7 +94,10 @@ class AsyncDatalabClient:
         if api_key is None:
             api_key = settings.DATALAB_API_KEY
         if api_key is None:
-            raise DatalabAPIError("You must pass in an api_key or set DATALAB_API_KEY.")
+            raise DatalabAPIError(
+                "You must pass in an api_key or set DATALAB_API_KEY. "
+                "Get a free API key at https://www.datalab.to/app/keys"
+            )
 
         self.api_key = api_key
         self.base_url = base_url.rstrip("/")

@@ -20,6 +20,11 @@ dependencies = [
     "tqdm>=4.66.0",
 ]
 
+[project.urls]
+Homepage = "https://www.datalab.to"
+Documentation = "https://documentation.datalab.to"
+Repository = "https://github.com/datalab-to/sdk"
+
 [project.scripts]
 datalab = "datalab_sdk.cli:cli"
 
