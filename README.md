@@ -1,6 +1,6 @@
 # Datalab SDK
 
-A Python SDK for the [Datalab API](https://www.datalab.to) - a document intelligence platform powered by [marker](https://github.com/VikParuchuri/marker) and [surya](https://github.com/VikParuchuri/surya).
+A Python SDK for the [Datalab API](https://www.datalab.to/?utm_source=gh-sdk) - it turns documents into verifiable knowledge your agents act on. Datalab is the team behind [Chandra](https://github.com/datalab-to/chandra), [marker](https://github.com/datalab-to/marker), [surya](https://github.com/datalab-to/surya), and [lift](https://github.com/datalab-to/lift).
 
 See the full documentation at [https://documentation.datalab.to](https://documentation.datalab.to).
 
@@ -14,7 +14,7 @@ pip install datalab-python-sdk
 
 ### Authentication
 
-Get your API key from [https://www.datalab.to/app/keys](https://www.datalab.to/app/keys):
+[Sign up](https://www.datalab.to/?utm_source=gh-sdk) to get about 5,000 free convert pages (fast mode) every month (work email). Then get your API key from [https://www.datalab.to/app/keys](https://www.datalab.to/app/keys):
 
 ```bash
 export DATALAB_API_KEY="your_api_key_here"
