@@ -9,13 +9,13 @@ Before running:
 
 Usage:
     # Single status check:
-    python examples/poll_workflow.py --execution_id 123 --single
+    python recipes/workflows/workflow_api_tutorial/5_poll_workflow.py --execution_id 123 --single
 
     # Poll until complete (default):
-    python examples/poll_workflow.py --execution_id 123
+    python recipes/workflows/workflow_api_tutorial/5_poll_workflow.py --execution_id 123
 
     # Custom polling (check every 5 seconds for up to 2 minutes):
-    python examples/poll_workflow.py --execution_id 123 --max_polls 24 --poll_interval 5
+    python recipes/workflows/workflow_api_tutorial/5_poll_workflow.py --execution_id 123 --max_polls 24 --poll_interval 5
 """
 
 import argparse
@@ -112,7 +112,7 @@ def main():
         if not args.single:
             print(f"\n   Timed out after {args.max_polls} polls.")
             print(f"   Run again to continue checking:")
-            print(f"   python examples/poll_workflow.py --execution_id {execution.id}")
+            print(f"   python recipes/workflows/workflow_api_tutorial/5_poll_workflow.py --execution_id {execution.id}")
 
     else:
         print(f"⚠️  Unknown status: {execution.status}")
@@ -120,7 +120,7 @@ def main():
     # Show next steps
     if execution.status == "IN_PROGRESS":
         print(f"\n💡 To continue polling:")
-        print(f"   python examples/poll_workflow.py --execution_id {execution.id}")
+        print(f"   python recipes/workflows/workflow_api_tutorial/5_poll_workflow.py --execution_id {execution.id}")
         print(f"\n💡 Or use the CLI:")
         print(f"   datalab get-execution-status --execution_id {execution.id} --max_polls 60")
 
