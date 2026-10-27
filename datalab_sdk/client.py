@@ -3,6 +3,7 @@ Datalab API client - async core with sync wrapper
 """
 
 import asyncio
+import json as jsonlib
 import mimetypes
 import os
 import shutil
@@ -25,6 +26,8 @@ from datalab_sdk.exceptions import (
     DatalabAPIError,
     DatalabTimeoutError,
     DatalabFileError,
+    DatalabValidationError,
+    api_error_for_status,
 )
 from datalab_sdk.mimetypes import MIMETYPE_MAP
 from datalab_sdk.models import (
@@ -37,11 +40,15 @@ from datalab_sdk.models import (
     ExtractOptions,
     SegmentOptions,
     CustomProcessorOptions,
-    CustomPipelineOptions,
     TrackChangesOptions,
     OCROptions,
     FormFillingOptions,
     FormFillingResult,
+    FormFieldsOptions,
+    FormFieldsResult,
+    AgentOptions,
+    AgentResult,
+    ExtractionSchemaSuggestions,
     Workflow,
     WorkflowStep,
     WorkflowExecution,
@@ -57,6 +64,107 @@ from datalab_sdk.models import (
     CustomProcessorVersion,
 )
 from datalab_sdk.settings import settings
+
+
+# HTTP status codes that a POST submission can safely retry. The API sends
+# 429 for rate limits and 503 when it cannot queue the job ("please retry").
+_SUBMIT_RETRY_STATUSES = (429, 503)
+_BACKOFF = wait_exponential_jitter(initial=5, max=120)
+_MAX_RETRY_AFTER_SECONDS = 120.0
+
+
+def _wait_retry_after_or_backoff(retry_state) -> float:
+    """Wait for the Retry-After header value if the API sent one.
+
+    Otherwise use exponential backoff with jitter.
+    """
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    retry_after = getattr(exc, "retry_after", None)
+    if retry_after is not None:
+        return min(max(retry_after, 0.0), _MAX_RETRY_AFTER_SECONDS)
+    return _BACKOFF(retry_state)
+
+
+def _is_retryable_submit_error(e: BaseException) -> bool:
+    return (
+        isinstance(e, DatalabAPIError)
+        and getattr(e, "status_code", None) in _SUBMIT_RETRY_STATUSES
+    )
+
+
+def _is_retryable_poll_error(e: BaseException) -> bool:
+    if not isinstance(e, DatalabAPIError):
+        return False
+    status_code = getattr(e, "status_code", None)
+    return (
+        # Connection errors have no status code.
+        status_code is None
+        # Request timeout or rate limit.
+        or status_code in (408, 429)
+        # Server errors.
+        or status_code >= 500
+    )
+
+
+def _error_message_from_body(error_data: Any, fallback: str) -> str:
+    """Make a readable message from an API error body.
+
+    FastAPI sends the message in "detail". A 422 validation error sends a
+    list of {"loc", "msg"} objects. Some endpoints use "error".
+    """
+    if not isinstance(error_data, dict):
+        return fallback
+    detail = error_data.get("detail") or error_data.get("error")
+    if isinstance(detail, str) and detail:
+        return detail
+    if isinstance(detail, list) and detail:
+        parts = []
+        for item in detail:
+            if isinstance(item, dict) and "msg" in item:
+                loc = ".".join(str(x) for x in item.get("loc", []) if x != "body")
+                parts.append(f"{loc}: {item['msg']}" if loc else str(item["msg"]))
+            else:
+                parts.append(str(item))
+        return "; ".join(parts)
+    if detail:
+        return str(detail)
+    return fallback
+
+
+def _parse_retry_after(value: Optional[str]) -> Optional[float]:
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+
+def _api_error_from_body(
+    status: int, body: bytes, reason: Optional[str], retry_after: Optional[str]
+) -> DatalabAPIError:
+    try:
+        error_data = jsonlib.loads(body) if body else None
+    except (ValueError, UnicodeDecodeError):
+        error_data = None
+    fallback = f"HTTP {status}" + (f" {reason}" if reason else "")
+    error = api_error_for_status(
+        _error_message_from_body(error_data, fallback), status, error_data
+    )
+    error.retry_after = _parse_retry_after(retry_after)
+    return error
+
+
+_WORKFLOWS_REMOVED_MESSAGE = (
+    "The Datalab Workflows API (/api/v1/workflows) was removed and its "
+    "endpoints no longer respond. Use pipelines instead: create_pipeline(), "
+    "run_pipeline() and get_pipeline_execution(). This SDK method will be "
+    "removed in a future version."
+)
+
+
+def _warn_workflows_removed() -> None:
+    warnings.warn(_WORKFLOWS_REMOVED_MESSAGE, DeprecationWarning, stacklevel=3)
 
 
 class _AsyncIterableReader:
@@ -143,38 +251,31 @@ class AsyncDatalabClient:
 
         try:
             async with self._session.request(method, url, **kwargs) as response:
-                response.raise_for_status()
-                return await response.json()
+                if response.status >= 400:
+                    # Read the body before the response is released, so the
+                    # API error message is not lost.
+                    raise _api_error_from_body(
+                        response.status,
+                        await response.read(),
+                        response.reason,
+                        response.headers.get("Retry-After"),
+                    )
+                return await response.json(content_type=None)
         except asyncio.TimeoutError:
             raise DatalabTimeoutError(f"Request timed out after {self.timeout} seconds")
-        except aiohttp.ClientResponseError as e:
-            try:
-                error_data = await response.json()
-                # FastAPI returns errors in "detail" field, but some APIs use "error"
-                error_message = (
-                    error_data.get("detail") or error_data.get("error") or str(e)
-                )
-            except Exception:
-                error_message = str(e)
-            raise DatalabAPIError(
-                error_message,
-                e.status,
-                error_data if "error_data" in locals() else None,
-            )
         except aiohttp.ClientError as e:
             raise DatalabAPIError(f"Request failed: {str(e)}")
 
     @retry(
-        retry=retry_if_exception(
-            lambda e: isinstance(e, DatalabAPIError)
-            and getattr(e, "status_code", None) == 429
-        ),
+        retry=retry_if_exception(_is_retryable_submit_error),
         stop=stop_after_attempt(10),
-        wait=wait_exponential_jitter(initial=5, max=120),
+        wait=_wait_retry_after_or_backoff,
         reraise=True,
     )
-    async def _submit_with_retry(self, endpoint: str, data=None, json=None) -> Dict[str, Any]:
-        """POST submission with retry for rate limits (429)"""
+    async def _submit_with_retry(
+        self, endpoint: str, data=None, json=None
+    ) -> Dict[str, Any]:
+        """POST submission with retry for rate limits (429) and 503"""
         kwargs = {}
         if data is not None:
             kwargs["data"] = data
@@ -207,12 +308,12 @@ class AsyncDatalabClient:
                 error = data.get("error")
 
             if status == "complete":
-                return result if stream_response_to else data
+                if stream_response_to:
+                    return result
+                return await self._resolve_signed_result(data)
 
             if not success and status != "processing":
-                raise DatalabAPIError(
-                    f"Processing failed: {error or 'Unknown error'}"
-                )
+                raise DatalabAPIError(f"Processing failed: {error or 'Unknown error'}")
 
             await asyncio.sleep(poll_interval)
 
@@ -223,28 +324,77 @@ class AsyncDatalabClient:
     @retry(
         retry=(
             retry_if_exception_type(DatalabTimeoutError)
-            | retry_if_exception(
-                lambda e: isinstance(e, DatalabAPIError)
-                and (
-                    # retry request timeout or too many requests
-                    getattr(e, "status_code", None) in (408, 429)
-                    or (
-                        # or if there's a server error
-                        getattr(e, "status_code", None) is not None
-                        and getattr(e, "status_code") >= 500
-                    )
-                    # or datalab api error without status code (e.g., connection errors)
-                    or getattr(e, "status_code", None) is None
-                )
-            )
+            | retry_if_exception(_is_retryable_poll_error)
         ),
         stop=stop_after_attempt(10),
-        wait=wait_exponential_jitter(initial=5, max=120),
+        wait=_wait_retry_after_or_backoff,
         reraise=True,
     )
     async def _poll_get_with_retry(self, url: str) -> Dict[str, Any]:
         """GET wrapper for polling with scoped retries for transient failures"""
         return await self._make_request("GET", url)
+
+    def _signed_url_session(self) -> aiohttp.ClientSession:
+        """A session without the API key header, for signed storage URLs."""
+        return aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=self.timeout),
+            headers={"User-Agent": f"datalab-python-sdk/{settings.VERSION}"},
+        )
+
+    async def _fetch_signed_result(self, url: str) -> Dict[str, Any]:
+        """Download a result JSON from a signed result_url"""
+        try:
+            async with self._signed_url_session() as session:
+                async with session.get(url) as resp:
+                    if resp.status >= 400:
+                        raise _api_error_from_body(
+                            resp.status, await resp.read(), resp.reason, None
+                        )
+                    return await resp.json(content_type=None)
+        except asyncio.TimeoutError:
+            raise DatalabTimeoutError(
+                f"Result download timed out after {self.timeout} seconds"
+            )
+        except aiohttp.ClientError as e:
+            raise DatalabAPIError(f"Result download failed: {str(e)}")
+
+    async def _download_signed_url_to_file(self, url: str, path: Path) -> None:
+        """Stream a signed result_url to a file on disk"""
+        try:
+            async with self._signed_url_session() as session:
+                async with session.get(url) as resp:
+                    if resp.status >= 400:
+                        raise _api_error_from_body(
+                            resp.status, await resp.read(), resp.reason, None
+                        )
+                    with open(path, "wb") as f:
+                        async for chunk in resp.content.iter_any():
+                            f.write(chunk)
+        except asyncio.TimeoutError:
+            raise DatalabTimeoutError(
+                f"Result download timed out after {self.timeout} seconds"
+            )
+        except aiohttp.ClientError as e:
+            raise DatalabAPIError(f"Result download failed: {str(e)}")
+
+    async def _resolve_signed_result(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Merge the full result when the API returns a signed result_url.
+
+        For some requests (for example a request with a non-default
+        processing_location), the API returns status "complete" with a
+        signed result_url and no output. This method downloads the result
+        and merges it with the fields of the API response. A field that the
+        API response sets takes priority over the downloaded value.
+        """
+        result_url = data.get("result_url")
+        if not result_url:
+            return data
+        downloaded = await self._fetch_signed_result(result_url)
+        if not isinstance(downloaded, dict):
+            return data
+        merged = dict(downloaded)
+        merged.update({k: v for k, v in data.items() if v is not None})
+        return merged
 
     @staticmethod
     async def _tee_stream_to_file(content, fd):
@@ -256,23 +406,15 @@ class AsyncDatalabClient:
     @retry(
         retry=(
             retry_if_exception_type(DatalabTimeoutError)
-            | retry_if_exception(
-                lambda e: isinstance(e, DatalabAPIError)
-                and (
-                    getattr(e, "status_code", None) in (408, 429)
-                    or (
-                        getattr(e, "status_code", None) is not None
-                        and getattr(e, "status_code") >= 500
-                    )
-                    or getattr(e, "status_code", None) is None
-                )
-            )
+            | retry_if_exception(_is_retryable_poll_error)
         ),
         stop=stop_after_attempt(10),
-        wait=wait_exponential_jitter(initial=5, max=120),
+        wait=_wait_retry_after_or_backoff,
         reraise=True,
     )
-    async def _poll_get_streaming(self, url: str, stream_response_to: Path) -> FileResult:
+    async def _poll_get_streaming(
+        self, url: str, stream_response_to: Path
+    ) -> FileResult:
         """GET with streaming to disk. Extracts status/success/error via ijson."""
         await self._ensure_session()
 
@@ -284,26 +426,25 @@ class AsyncDatalabClient:
             try:
                 resp = await self._session.get(url)
             except asyncio.TimeoutError:
-                raise DatalabTimeoutError(f"Request timed out after {self.timeout} seconds")
+                raise DatalabTimeoutError(
+                    f"Request timed out after {self.timeout} seconds"
+                )
             except aiohttp.ClientError as e:
                 raise DatalabAPIError(f"Request failed: {str(e)}")
 
             try:
                 if resp.status >= 400:
-                    body = await resp.read()
-                    try:
-                        import json as _json
-                        error_data = _json.loads(body)
-                        error_message = (
-                            error_data.get("detail") or error_data.get("error") or str(resp.status)
-                        )
-                    except Exception:
-                        error_message = f"HTTP {resp.status}"
-                    raise DatalabAPIError(error_message, resp.status)
+                    raise _api_error_from_body(
+                        resp.status,
+                        await resp.read(),
+                        resp.reason,
+                        resp.headers.get("Retry-After"),
+                    )
 
                 status = None
                 success = None
                 error = None
+                result_url = None
 
                 tee_reader = _AsyncIterableReader(
                     self._tee_stream_to_file(resp.content, fd)
@@ -315,6 +456,8 @@ class AsyncDatalabClient:
                         success = value
                     elif prefix == "error" and event in ("string", "null"):
                         error = value
+                    elif prefix == "result_url" and event == "string":
+                        result_url = value
             finally:
                 resp.release()
 
@@ -327,6 +470,11 @@ class AsyncDatalabClient:
             # Close fd before moving
             os.close(fd)
             fd = None
+
+            if status == "complete" and result_url:
+                # The API sent a signed URL instead of the full result.
+                # Stream the full result from that URL into the file.
+                await self._download_signed_url_to_file(result_url, Path(tmp_path))
 
             if status == "complete":
                 shutil.move(tmp_path, stream_response_to)
@@ -381,11 +529,15 @@ class AsyncDatalabClient:
 
         return file_path.name, file_data, mime_type
 
-    def get_form_params(self, file_path=None, file_url=None, options=None, require_file=True):
+    def get_form_params(
+        self, file_path=None, file_url=None, options=None, require_file=True
+    ):
         form_data = aiohttp.FormData()
 
         if file_url and file_path:
-            raise ValueError("Either file_path or file_url must be provided, not both.")
+            raise DatalabValidationError(
+                "Either file_path or file_url must be provided, not both."
+            )
 
         # Use either file_url or file upload, not both
         if file_url:
@@ -396,7 +548,9 @@ class AsyncDatalabClient:
                 "file", file_data, filename=filename, content_type=mime_type
             )
         elif require_file:
-            raise ValueError("Either file_path or file_url must be provided")
+            raise DatalabValidationError(
+                "Either file_path or file_url must be provided"
+            )
 
         if options:
             for key, value in options.to_form_data().items():
@@ -407,7 +561,9 @@ class AsyncDatalabClient:
 
         return form_data
 
-    def _build_conversion_result(self, result_data: Dict[str, Any], default_format: str = "markdown") -> ConversionResult:
+    def _build_conversion_result(
+        self, result_data: Dict[str, Any], default_format: str = "markdown"
+    ) -> ConversionResult:
         """Build a ConversionResult from API response data"""
         return ConversionResult(
             success=result_data.get("success", False),
@@ -429,31 +585,86 @@ class AsyncDatalabClient:
             parse_quality_score=result_data.get("parse_quality_score"),
             runtime=result_data.get("runtime"),
             cost_breakdown=result_data.get("cost_breakdown"),
-            evaluation=result_data.get("evaluation"),
+            request_id=result_data.get("request_id"),
+            result_url=result_data.get("result_url"),
+            expires_in=result_data.get("expires_in"),
+            extraction_score_average=result_data.get("extraction_score_average"),
+            extraction_scoring_status=result_data.get("extraction_scoring_status"),
+            extraction_mode=result_data.get("extraction_mode"),
+            segmentation_schema=result_data.get("segmentation_schema"),
+            checkpoint_reused=result_data.get("checkpoint_reused"),
         )
 
     async def _submit_and_poll(
         self,
         endpoint: str,
-        data: aiohttp.FormData,
+        data: Optional[aiohttp.FormData] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
         stream_response_to: Optional[Path] = None,
+        json: Optional[Dict[str, Any]] = None,
     ) -> Union[Dict[str, Any], FileResult]:
-        """Submit a request and poll for the result"""
-        initial_data = await self._submit_with_retry(endpoint, data=data)
+        """Submit a request and poll for the result.
+
+        The returned dict also carries the request_id (and checkpoint_reused,
+        when the API sends it) from the submission response.
+        """
+        initial_data = await self._submit_with_retry(endpoint, data=data, json=json)
 
         if not initial_data.get("success"):
             raise DatalabAPIError(
                 f"Request failed: {initial_data.get('error', 'Unknown error')}"
             )
 
-        return await self._poll_result(
+        result = await self._poll_result(
             initial_data["request_check_url"],
             max_polls=max_polls,
             poll_interval=poll_interval,
             stream_response_to=stream_response_to,
         )
+        if isinstance(result, dict):
+            result = dict(result)
+            for key in ("request_id", "checkpoint_reused"):
+                if result.get(key) is None and initial_data.get(key) is not None:
+                    result[key] = initial_data[key]
+        return result
+
+    @staticmethod
+    def _resolve_stream_path(
+        save_output: Optional[Union[str, Path]],
+        stream_response_to: Optional[Union[str, Path]],
+    ) -> Optional[Path]:
+        """Check the output arguments and return the streaming path, if any"""
+        if save_output and stream_response_to:
+            raise DatalabValidationError(
+                "Cannot use both 'save_output' and 'stream_response_to'."
+            )
+        if not stream_response_to:
+            return None
+        resolved = Path(stream_response_to)
+        if not resolved.parent.is_dir():
+            raise DatalabValidationError(f"Directory does not exist: {resolved.parent}")
+        return resolved
+
+    @staticmethod
+    def _save_if_requested(result, save_output, has_output: bool = True) -> None:
+        if save_output and result.success and has_output:
+            output_path = Path(save_output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            result.save_output(output_path)
+
+    @staticmethod
+    def _check_file_or_checkpoint(file_path, file_url, checkpoint_id) -> None:
+        has_file = file_path is not None or file_url is not None
+        has_checkpoint = checkpoint_id is not None
+        if not has_file and not has_checkpoint:
+            raise DatalabValidationError(
+                "Either file_path/file_url or options.checkpoint_id must be provided"
+            )
+        if has_file and has_checkpoint:
+            raise DatalabValidationError(
+                "Provide either file_path/file_url or checkpoint_id, not both"
+            )
 
     # Convenient endpoint-specific methods
     async def convert(
@@ -471,21 +682,17 @@ class AsyncDatalabClient:
 
         Args:
             file_path: Path to the file to convert
-            file_url: URL of the file to convert
+            file_url: URL of the file to convert (http, https, or a
+                datalab://file-{id} reference from upload_files())
             options: Processing options for conversion
             save_output: Optional path to save output files
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
-        if save_output and stream_response_to:
-            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
-
-        resolved_stream_response_to = None
-        if stream_response_to:
-            resolved_stream_response_to = Path(stream_response_to)
-            if not resolved_stream_response_to.parent.is_dir():
-                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+        resolved_stream_response_to = self._resolve_stream_path(
+            save_output, stream_response_to
+        )
 
         if options is None:
             options = ConvertOptions()
@@ -504,13 +711,7 @@ class AsyncDatalabClient:
             return result_data
 
         result = self._build_conversion_result(result_data, options.output_format)
-
-        # Save output if requested
-        if save_output and result.success:
-            output_path = Path(save_output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            result.save_output(output_path)
-
+        self._save_if_requested(result, save_output)
         return result
 
     async def extract(
@@ -538,40 +739,40 @@ class AsyncDatalabClient:
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
-        if save_output and stream_response_to:
-            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
-
-        resolved_stream_response_to = None
-        if stream_response_to:
-            resolved_stream_response_to = Path(stream_response_to)
-            if not resolved_stream_response_to.parent.is_dir():
-                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+        resolved_stream_response_to = self._resolve_stream_path(
+            save_output, stream_response_to
+        )
 
         if options is None:
-            raise ValueError("options must be provided with page_schema or schema_id")
+            raise DatalabValidationError(
+                "options must be provided with page_schema or schema_id"
+            )
 
         has_page_schema = bool(options.page_schema)
         has_schema_id = bool(options.schema_id)
 
         if has_page_schema and has_schema_id:
-            raise ValueError("page_schema and schema_id are mutually exclusive. Provide one or the other.")
+            raise DatalabValidationError(
+                "page_schema and schema_id are mutually exclusive. Provide one or the other."
+            )
         if not has_page_schema and not has_schema_id:
-            raise ValueError("Either page_schema or schema_id must be provided in options.")
+            raise DatalabValidationError(
+                "Either page_schema or schema_id must be provided in options."
+            )
         if options.schema_version is not None and not has_schema_id:
-            raise ValueError("schema_version can only be used with schema_id.")
+            raise DatalabValidationError(
+                "schema_version can only be used with schema_id."
+            )
 
-        has_file = file_path is not None or file_url is not None
-        has_checkpoint = options.checkpoint_id is not None
-
-        if not has_file and not has_checkpoint:
-            raise ValueError("Either file_path/file_url or options.checkpoint_id must be provided")
-        if has_file and has_checkpoint:
-            raise ValueError("Provide either file_path/file_url or checkpoint_id, not both")
+        self._check_file_or_checkpoint(file_path, file_url, options.checkpoint_id)
 
         result_data = await self._submit_and_poll(
             "/api/v1/extract",
             data=self.get_form_params(
-                file_path=file_path, file_url=file_url, options=options, require_file=False
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                require_file=False,
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
@@ -582,12 +783,7 @@ class AsyncDatalabClient:
             return result_data
 
         result = self._build_conversion_result(result_data, options.output_format)
-
-        if save_output and result.success:
-            output_path = Path(save_output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            result.save_output(output_path)
-
+        self._save_if_requested(result, save_output)
         return result
 
     async def segment(
@@ -615,30 +811,24 @@ class AsyncDatalabClient:
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
-        if save_output and stream_response_to:
-            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
-
-        resolved_stream_response_to = None
-        if stream_response_to:
-            resolved_stream_response_to = Path(stream_response_to)
-            if not resolved_stream_response_to.parent.is_dir():
-                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+        resolved_stream_response_to = self._resolve_stream_path(
+            save_output, stream_response_to
+        )
 
         if options is None:
-            raise ValueError("options must be provided with segmentation_schema")
+            raise DatalabValidationError(
+                "options must be provided with segmentation_schema"
+            )
 
-        has_file = file_path is not None or file_url is not None
-        has_checkpoint = options.checkpoint_id is not None
-
-        if not has_file and not has_checkpoint:
-            raise ValueError("Either file_path/file_url or options.checkpoint_id must be provided")
-        if has_file and has_checkpoint:
-            raise ValueError("Provide either file_path/file_url or checkpoint_id, not both")
+        self._check_file_or_checkpoint(file_path, file_url, options.checkpoint_id)
 
         result_data = await self._submit_and_poll(
             "/api/v1/segment",
             data=self.get_form_params(
-                file_path=file_path, file_url=file_url, options=options, require_file=False
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                require_file=False,
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
@@ -649,12 +839,84 @@ class AsyncDatalabClient:
             return result_data
 
         result = self._build_conversion_result(result_data, "markdown")
+        self._save_if_requested(result, save_output)
+        return result
 
-        if save_output and result.success:
-            output_path = Path(save_output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            result.save_output(output_path)
+    async def run_agent(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[AgentOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[AgentResult, FileResult]:
+        """
+        Run a published agent processor on a document (open beta; API may change).
 
+        The processor contract sets the prompt, the output shape and the
+        schema. A custom processor cp_XXXXX also runs here as
+        processor="cp_XXXXX".
+
+        Args:
+            file_path: Path to the file to process
+            file_url: URL of the file to process
+            options: Agent options (must include processor)
+            save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        resolved_stream_response_to = self._resolve_stream_path(
+            save_output, stream_response_to
+        )
+
+        if options is None or not options.processor:
+            raise DatalabValidationError("options must be provided with processor")
+
+        result_data = await self._submit_and_poll(
+            "/api/v1/agent",
+            data=self.get_form_params(
+                file_path=file_path, file_url=file_url, options=options
+            ),
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
+        )
+
+        if isinstance(result_data, FileResult):
+            return result_data
+
+        result = AgentResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            output_shape=result_data.get("output_shape"),
+            finished=result_data.get("finished"),
+            turns=result_data.get("turns"),
+            markdown=result_data.get("markdown"),
+            html=result_data.get("html"),
+            json=result_data.get("json"),
+            chunks=result_data.get("chunks"),
+            extraction_schema_json=result_data.get("extraction_schema_json"),
+            segments=result_data.get("segments"),
+            metadata=result_data.get("metadata"),
+            verdict=result_data.get("verdict"),
+            jats_xml=result_data.get("jats_xml"),
+            accessible_pdf=result_data.get("accessible_pdf"),
+            images=result_data.get("images"),
+            verifier_metrics=result_data.get("verifier_metrics"),
+            page_count=result_data.get("page_count"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            parse_quality_score=result_data.get("parse_quality_score"),
+            runtime=result_data.get("runtime"),
+            versions=result_data.get("versions"),
+            request_id=result_data.get("request_id"),
+            result_url=result_data.get("result_url"),
+            expires_in=result_data.get("expires_in"),
+        )
+        self._save_if_requested(result, save_output)
         return result
 
     async def run_custom_processor(
@@ -670,6 +932,9 @@ class AsyncDatalabClient:
         """
         Execute a custom processor on a document
 
+        .. deprecated::
+            The API deprecates /custom-processor. Use run_agent() with AgentOptions(processor="cp_XXXXX") instead.
+
         Args:
             file_path: Path to the file to process
             file_url: URL of the file to process
@@ -679,17 +944,38 @@ class AsyncDatalabClient:
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
-        if save_output and stream_response_to:
-            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
+        warnings.warn(
+            "run_custom_processor() uses the deprecated /custom-processor endpoint. "
+            "Use run_agent() with AgentOptions(processor='cp_XXXXX') instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return await self._run_custom_processor(
+            file_path=file_path,
+            file_url=file_url,
+            options=options,
+            save_output=save_output,
+            stream_response_to=stream_response_to,
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
 
-        resolved_stream_response_to = None
-        if stream_response_to:
-            resolved_stream_response_to = Path(stream_response_to)
-            if not resolved_stream_response_to.parent.is_dir():
-                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+    async def _run_custom_processor(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[CustomProcessorOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[ConversionResult, FileResult]:
+        resolved_stream_response_to = self._resolve_stream_path(
+            save_output, stream_response_to
+        )
 
         if options is None:
-            raise ValueError("options must be provided with pipeline_id")
+            raise DatalabValidationError("options must be provided with pipeline_id")
 
         result_data = await self._submit_and_poll(
             "/api/v1/custom-processor",
@@ -705,12 +991,7 @@ class AsyncDatalabClient:
             return result_data
 
         result = self._build_conversion_result(result_data, options.output_format)
-
-        if save_output and result.success:
-            output_path = Path(save_output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            result.save_output(output_path)
-
+        self._save_if_requested(result, save_output)
         return result
 
     async def run_custom_pipeline(
@@ -726,14 +1007,15 @@ class AsyncDatalabClient:
         """Execute a custom processor on a document
 
         .. deprecated::
-            Use run_custom_processor() instead.
+            Use run_agent() with AgentOptions(processor="cp_XXXXX") instead.
         """
         warnings.warn(
-            "run_custom_pipeline() is deprecated. Use run_custom_processor() instead.",
+            "run_custom_pipeline() and run_custom_processor() are deprecated. "
+            "Use run_agent() with AgentOptions(processor='cp_XXXXX') instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-        return await self.run_custom_processor(
+        return await self._run_custom_processor(
             file_path=file_path,
             file_url=file_url,
             options=options,
@@ -754,25 +1036,20 @@ class AsyncDatalabClient:
         poll_interval: int = 1,
     ) -> Union[ConversionResult, FileResult]:
         """
-        Extract and display tracked changes from DOCX documents
+        Extract tracked changes and comments from DOCX or PDF documents
 
         Args:
-            file_path: Path to the DOCX file
-            file_url: URL of the DOCX file
+            file_path: Path to the DOCX or PDF file
+            file_url: URL of the DOCX or PDF file
             options: Track changes options
             save_output: Optional path to save output files
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
-        if save_output and stream_response_to:
-            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
-
-        resolved_stream_response_to = None
-        if stream_response_to:
-            resolved_stream_response_to = Path(stream_response_to)
-            if not resolved_stream_response_to.parent.is_dir():
-                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+        resolved_stream_response_to = self._resolve_stream_path(
+            save_output, stream_response_to
+        )
 
         if options is None:
             options = TrackChangesOptions()
@@ -791,12 +1068,7 @@ class AsyncDatalabClient:
             return result_data
 
         result = self._build_conversion_result(result_data, options.output_format)
-
-        if save_output and result.success:
-            output_path = Path(save_output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            result.save_output(output_path)
-
+        self._save_if_requested(result, save_output)
         return result
 
     async def create_document(
@@ -808,6 +1080,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        processing_location: Optional[str] = None,
     ) -> Union[CreateDocumentResult, FileResult]:
         """
         Create a DOCX document from markdown with track changes support
@@ -825,15 +1098,11 @@ class AsyncDatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            processing_location: Optional residency region, e.g. "eu"
         """
-        if save_output and stream_response_to:
-            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
-
-        resolved_stream_response_to = None
-        if stream_response_to:
-            resolved_stream_response_to = Path(stream_response_to)
-            if not resolved_stream_response_to.parent.is_dir():
-                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+        resolved_stream_response_to = self._resolve_stream_path(
+            save_output, stream_response_to
+        )
 
         payload = {
             "markdown": markdown,
@@ -841,19 +1110,12 @@ class AsyncDatalabClient:
         }
         if webhook_url:
             payload["webhook_url"] = webhook_url
+        if processing_location is not None:
+            payload["processing_location"] = processing_location
 
-        initial_data = await self._submit_with_retry(
+        result_data = await self._submit_and_poll(
             "/api/v1/create-document",
             json=payload,
-        )
-
-        if not initial_data.get("success"):
-            raise DatalabAPIError(
-                f"Request failed: {initial_data.get('error', 'Unknown error')}"
-            )
-
-        result_data = await self._poll_result(
-            initial_data["request_check_url"],
             max_polls=max_polls,
             poll_interval=poll_interval,
             stream_response_to=resolved_stream_response_to,
@@ -872,13 +1134,11 @@ class AsyncDatalabClient:
             page_count=result_data.get("page_count"),
             cost_breakdown=result_data.get("cost_breakdown"),
             versions=result_data.get("versions"),
+            request_id=result_data.get("request_id"),
+            result_url=result_data.get("result_url"),
+            expires_in=result_data.get("expires_in"),
         )
-
-        if save_output and result.success and result.output_base64:
-            output_path = Path(save_output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            result.save_output(output_path)
-
+        self._save_if_requested(result, save_output, bool(result.output_base64))
         return result
 
     async def ocr(
@@ -895,14 +1155,9 @@ class AsyncDatalabClient:
         .. deprecated::
             The /ocr endpoint is deprecated. Use convert() instead.
         """
-        if save_output and stream_response_to:
-            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
-
-        resolved_stream_response_to = None
-        if stream_response_to:
-            resolved_stream_response_to = Path(stream_response_to)
-            if not resolved_stream_response_to.parent.is_dir():
-                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+        resolved_stream_response_to = self._resolve_stream_path(
+            save_output, stream_response_to
+        )
 
         warnings.warn(
             "The ocr() method is deprecated and will be removed in a future version. "
@@ -913,18 +1168,9 @@ class AsyncDatalabClient:
         if options is None:
             options = OCROptions()
 
-        initial_data = await self._submit_with_retry(
+        result_data = await self._submit_and_poll(
             "/api/v1/ocr",
             data=self.get_form_params(file_path=file_path, options=options),
-        )
-
-        if not initial_data.get("success"):
-            raise DatalabAPIError(
-                f"Request failed: {initial_data.get('error', 'Unknown error')}"
-            )
-
-        result_data = await self._poll_result(
-            initial_data["request_check_url"],
             max_polls=max_polls,
             poll_interval=poll_interval,
             stream_response_to=resolved_stream_response_to,
@@ -941,14 +1187,9 @@ class AsyncDatalabClient:
             status=result_data.get("status", "complete"),
             versions=result_data.get("versions"),
             cost_breakdown=result_data.get("cost_breakdown"),
+            request_id=result_data.get("request_id"),
         )
-
-        # Save output if requested
-        if save_output and result.success:
-            output_path = Path(save_output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            result.save_output(output_path)
-
+        self._save_if_requested(result, save_output)
         return result
 
     async def fill(
@@ -973,32 +1214,18 @@ class AsyncDatalabClient:
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
-        if save_output and stream_response_to:
-            raise ValueError("Cannot use both 'save_output' and 'stream_response_to'.")
-
-        resolved_stream_response_to = None
-        if stream_response_to:
-            resolved_stream_response_to = Path(stream_response_to)
-            if not resolved_stream_response_to.parent.is_dir():
-                raise ValueError(f"Directory does not exist: {resolved_stream_response_to.parent}")
+        resolved_stream_response_to = self._resolve_stream_path(
+            save_output, stream_response_to
+        )
 
         if options is None:
-            raise ValueError("options must be provided with field_data")
+            raise DatalabValidationError("options must be provided with field_data")
 
-        initial_data = await self._submit_with_retry(
+        result_data = await self._submit_and_poll(
             "/api/v1/fill",
             data=self.get_form_params(
                 file_path=file_path, file_url=file_url, options=options
             ),
-        )
-
-        if not initial_data.get("success"):
-            raise DatalabAPIError(
-                f"Request failed: {initial_data.get('error', 'Unknown error')}"
-            )
-
-        result_data = await self._poll_result(
-            initial_data["request_check_url"],
             max_polls=max_polls,
             poll_interval=poll_interval,
             stream_response_to=resolved_stream_response_to,
@@ -1020,15 +1247,127 @@ class AsyncDatalabClient:
             page_count=result_data.get("page_count"),
             cost_breakdown=result_data.get("cost_breakdown"),
             versions=result_data.get("versions"),
+            request_id=result_data.get("request_id"),
+            result_url=result_data.get("result_url"),
+            expires_in=result_data.get("expires_in"),
+        )
+        self._save_if_requested(result, save_output, bool(result.output_base64))
+        return result
+
+    async def form_fields(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[FormFieldsOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[FormFieldsResult, FileResult]:
+        """
+        Find the fillable fields on each page of a PDF or image
+
+        The API finds blank lines, empty boxes, tick boxes and signature
+        blanks, with their printed labels.
+
+        Args:
+            file_path: Path to the PDF or image
+            file_url: URL of the PDF or image
+            options: Form field options
+            save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        resolved_stream_response_to = self._resolve_stream_path(
+            save_output, stream_response_to
         )
 
-        # Save output if requested
-        if save_output and result.success and result.output_base64:
-            output_path = Path(save_output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            result.save_output(output_path)
+        if options is None:
+            options = FormFieldsOptions()
 
+        result_data = await self._submit_and_poll(
+            "/api/v1/form-fields",
+            data=self.get_form_params(
+                file_path=file_path, file_url=file_url, options=options
+            ),
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
+        )
+
+        if isinstance(result_data, FileResult):
+            return result_data
+
+        result = FormFieldsResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            pages=result_data.get("pages"),
+            page_count=result_data.get("page_count"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            runtime=result_data.get("runtime"),
+            versions=result_data.get("versions"),
+            request_id=result_data.get("request_id"),
+            result_url=result_data.get("result_url"),
+            expires_in=result_data.get("expires_in"),
+        )
+        self._save_if_requested(result, save_output)
         return result
+
+    async def generate_extraction_schemas(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        processing_location: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ExtractionSchemaSuggestions:
+        """
+        Suggest extraction schemas for a parsed document
+
+        Run convert() with ConvertOptions(save_checkpoint=True) first, then
+        pass the checkpoint_id of that result.
+
+        Args:
+            checkpoint_id: Checkpoint ID from a previous convert()
+            webhook_url: Optional webhook URL for completion notification
+            processing_location: Optional residency region, e.g. "eu"
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+        """
+        payload: Dict[str, Any] = {"checkpoint_id": checkpoint_id}
+        if webhook_url is not None:
+            payload["webhook_url"] = webhook_url
+        if processing_location is not None:
+            payload["processing_location"] = processing_location
+
+        result_data = await self._submit_and_poll(
+            "/api/v1/marker/extraction/gen_schemas",
+            json=payload,
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+        )
+        return ExtractionSchemaSuggestions(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            suggestions=result_data.get("suggestions"),
+            page_count=result_data.get("page_count"),
+            request_id=result_data.get("request_id"),
+        )
+
+    async def delete_result(self, request_id: str) -> Dict[str, Any]:
+        """
+        Delete the stored result of a finished request
+
+        Results otherwise expire on their own. Use this method to remove a
+        result as soon as you have downloaded it.
+
+        Args:
+            request_id: The request_id of a result
+        """
+        return await self._make_request("DELETE", f"/api/v1/results/{request_id}")
 
     # Workflow methods
     async def create_workflow(
@@ -1039,6 +1378,9 @@ class AsyncDatalabClient:
         """
         Create a new workflow
 
+        .. deprecated::
+            The API removed the Workflows API. Use pipelines instead.
+
         Args:
             name: Name of the workflow
             steps: List of workflow steps
@@ -1046,6 +1388,7 @@ class AsyncDatalabClient:
         Returns:
             Workflow object with ID and metadata
         """
+        _warn_workflows_removed()
         workflow_data = {
             "name": name,
             "steps": [step.to_dict() for step in steps],
@@ -1081,12 +1424,16 @@ class AsyncDatalabClient:
         """
         Get a workflow by ID
 
+        .. deprecated::
+            The API removed the Workflows API. Use pipelines instead.
+
         Args:
             workflow_id: ID of the workflow to retrieve
 
         Returns:
             Workflow object
         """
+        _warn_workflows_removed()
         response = await self._make_request(
             "GET",
             f"/api/v1/workflows/workflows/{workflow_id}",
@@ -1118,9 +1465,13 @@ class AsyncDatalabClient:
         """
         Get all available workflow step types
 
+        .. deprecated::
+            The API removed the Workflows API. Use pipelines instead.
+
         Returns:
             Dictionary containing step_types list with their schemas
         """
+        _warn_workflows_removed()
         response = await self._make_request(
             "GET",
             "/api/v1/workflows/step-types",
@@ -1131,9 +1482,13 @@ class AsyncDatalabClient:
         """
         List all workflows for the authenticated user's team
 
+        .. deprecated::
+            The API removed the Workflows API. Use pipelines instead.
+
         Returns:
             List of Workflow objects
         """
+        _warn_workflows_removed()
         response = await self._make_request(
             "GET",
             "/api/v1/workflows/workflows",
@@ -1171,6 +1526,9 @@ class AsyncDatalabClient:
         """
         Delete a workflow definition
 
+        .. deprecated::
+            The API removed the Workflows API. Use pipelines instead.
+
         Args:
             workflow_id: ID of the workflow to delete
 
@@ -1182,6 +1540,7 @@ class AsyncDatalabClient:
         Raises:
             DatalabAPIError: If workflow has executions or cannot be deleted
         """
+        _warn_workflows_removed()
         response = await self._make_request(
             "DELETE",
             f"/api/v1/workflows/workflows/{workflow_id}",
@@ -1202,6 +1561,9 @@ class AsyncDatalabClient:
         """
         Trigger a workflow execution
 
+        .. deprecated::
+            The API removed the Workflows API. Use pipelines instead.
+
         Args:
             workflow_id: ID of the workflow to execute
             input_config: Input configuration for the workflow
@@ -1210,6 +1572,7 @@ class AsyncDatalabClient:
             WorkflowExecution object with initial status (typically "processing")
             Use get_execution_status() to check completion status
         """
+        _warn_workflows_removed()
         execution_data = {
             "input_config": input_config.to_dict(),
         }
@@ -1248,6 +1611,9 @@ class AsyncDatalabClient:
         """
         Get the status of a workflow execution, optionally polling until completion
 
+        .. deprecated::
+            The API removed the Workflows API. Use pipelines instead.
+
         Args:
             execution_id: ID of the execution to check
             max_polls: Maximum number of polling attempts (default: 1 for single check)
@@ -1258,6 +1624,7 @@ class AsyncDatalabClient:
             WorkflowExecution object with current status and results.
             Results will contain presigned URLs or downloaded data depending on download_results flag.
         """
+        _warn_workflows_removed()
         for i in range(max_polls):
             response = await self._make_request(
                 "GET",
@@ -1375,6 +1742,7 @@ class AsyncDatalabClient:
     async def _upload_single_file(
         self,
         file_path: Union[str, Path],
+        processing_location: Optional[str] = None,
     ) -> UploadedFileMetadata:
         """
         Internal method to upload a single file to Datalab storage
@@ -1408,6 +1776,11 @@ class AsyncDatalabClient:
             json={
                 "filename": file_path.name,
                 "content_type": mime_type,
+                **(
+                    {"processing_location": processing_location}
+                    if processing_location is not None
+                    else {}
+                ),
             },
         )
 
@@ -1451,6 +1824,7 @@ class AsyncDatalabClient:
     async def upload_files(
         self,
         file_paths: Union[str, Path, list[Union[str, Path]]],
+        processing_location: Optional[str] = None,
     ) -> Union[UploadedFileMetadata, list[UploadedFileMetadata]]:
         """
         Upload one or more files to Datalab storage
@@ -1464,6 +1838,9 @@ class AsyncDatalabClient:
 
         Args:
             file_paths: Single file path or list of file paths to upload
+            processing_location: Optional residency region (e.g. "eu") for
+                the stored file. Use the returned reference as file_url in a
+                request with the same processing_location.
 
         Returns:
             If single file: UploadedFileMetadata object
@@ -1478,10 +1855,13 @@ class AsyncDatalabClient:
         """
         # Handle single file path
         if isinstance(file_paths, (str, Path)):
-            return await self._upload_single_file(file_paths)
+            return await self._upload_single_file(file_paths, processing_location)
 
         # Handle list of file paths
-        tasks = [self._upload_single_file(file_path) for file_path in file_paths]
+        tasks = [
+            self._upload_single_file(file_path, processing_location)
+            for file_path in file_paths
+        ]
         return await asyncio.gather(*tasks)
 
     async def list_files(
@@ -1578,7 +1958,9 @@ class AsyncDatalabClient:
                 - original_filename: Original filename
         """
         if expires_in < 60 or expires_in > 86400:
-            raise ValueError("expires_in must be between 60 and 86400 seconds")
+            raise DatalabValidationError(
+                "expires_in must be between 60 and 86400 seconds"
+            )
 
         response = await self._make_request(
             "GET",
@@ -1639,7 +2021,9 @@ class AsyncDatalabClient:
         if description is not None:
             payload["description"] = description
 
-        response = await self._make_request("POST", "/api/v1/extraction_schemas", json=payload)
+        response = await self._make_request(
+            "POST", "/api/v1/extraction_schemas", json=payload
+        )
         return self._build_extraction_schema(response)
 
     async def list_extraction_schemas(
@@ -1657,9 +2041,13 @@ class AsyncDatalabClient:
             include_archived: Include archived schemas (default: False)
         """
         params = f"limit={limit}&offset={offset}&include_archived={str(include_archived).lower()}"
-        response = await self._make_request("GET", f"/api/v1/extraction_schemas?{params}")
+        response = await self._make_request(
+            "GET", f"/api/v1/extraction_schemas?{params}"
+        )
         return {
-            "schemas": [self._build_extraction_schema(s) for s in response.get("schemas", [])],
+            "schemas": [
+                self._build_extraction_schema(s) for s in response.get("schemas", [])
+            ],
             "total": response.get("total", 0),
         }
 
@@ -1670,7 +2058,9 @@ class AsyncDatalabClient:
         Args:
             schema_id: Schema ID string (e.g. sch_k8Hx9mP2nQ4v)
         """
-        response = await self._make_request("GET", f"/api/v1/extraction_schemas/{schema_id}")
+        response = await self._make_request(
+            "GET", f"/api/v1/extraction_schemas/{schema_id}"
+        )
         return self._build_extraction_schema(response)
 
     async def update_extraction_schema(
@@ -1705,7 +2095,9 @@ class AsyncDatalabClient:
         if create_new_version:
             payload["create_new_version"] = True
 
-        response = await self._make_request("PUT", f"/api/v1/extraction_schemas/{schema_id}", json=payload)
+        response = await self._make_request(
+            "PUT", f"/api/v1/extraction_schemas/{schema_id}", json=payload
+        )
         return self._build_extraction_schema(response)
 
     async def delete_extraction_schema(self, schema_id: str) -> ExtractionSchema:
@@ -1715,7 +2107,9 @@ class AsyncDatalabClient:
         Args:
             schema_id: Schema ID string (e.g. sch_k8Hx9mP2nQ4v)
         """
-        response = await self._make_request("DELETE", f"/api/v1/extraction_schemas/{schema_id}")
+        response = await self._make_request(
+            "DELETE", f"/api/v1/extraction_schemas/{schema_id}"
+        )
         return self._build_extraction_schema(response)
 
     @staticmethod
@@ -1738,14 +2132,21 @@ class AsyncDatalabClient:
     async def create_pipeline(
         self,
         steps: list[PipelineProcessor],
+        reuse_draft: bool = False,
     ) -> PipelineConfig:
         """
         Create a new pipeline
 
         Args:
             steps: Ordered list of PipelineProcessor objects
+            reuse_draft: If True, reuse the most recent unsaved draft that has
+                the same ordered step types, instead of a new pipeline. The
+                API overwrites the steps of that draft. Saved pipelines are
+                never reused. PipelineConfig.reused tells which case occurred.
         """
-        payload = {"steps": [s.to_dict() for s in steps]}
+        payload: Dict[str, Any] = {"steps": [s.to_dict() for s in steps]}
+        if reuse_draft:
+            payload["reuse_draft"] = True
         response = await self._make_request("POST", "/api/v1/pipelines", json=payload)
         return self._build_pipeline_config(response)
 
@@ -1772,7 +2173,9 @@ class AsyncDatalabClient:
         )
         response = await self._make_request("GET", f"/api/v1/pipelines?{params}")
         return {
-            "pipelines": [self._build_pipeline_config(p) for p in response.get("pipelines", [])],
+            "pipelines": [
+                self._build_pipeline_config(p) for p in response.get("pipelines", [])
+            ],
             "total": response.get("total", 0),
         }
 
@@ -1799,7 +2202,9 @@ class AsyncDatalabClient:
             steps: New ordered list of PipelineProcessor objects
         """
         payload = {"steps": [s.to_dict() for s in steps]}
-        response = await self._make_request("PUT", f"/api/v1/pipelines/{pipeline_id}", json=payload)
+        response = await self._make_request(
+            "PUT", f"/api/v1/pipelines/{pipeline_id}", json=payload
+        )
         return self._build_pipeline_config(response)
 
     async def save_pipeline(
@@ -1821,11 +2226,15 @@ class AsyncDatalabClient:
 
     async def archive_pipeline(self, pipeline_id: str) -> Dict[str, Any]:
         """Archive a pipeline, hiding it from the default list"""
-        return await self._make_request("POST", f"/api/v1/pipelines/{pipeline_id}/archive")
+        return await self._make_request(
+            "POST", f"/api/v1/pipelines/{pipeline_id}/archive"
+        )
 
     async def unarchive_pipeline(self, pipeline_id: str) -> Dict[str, Any]:
         """Unarchive a pipeline, restoring it to the default list"""
-        return await self._make_request("POST", f"/api/v1/pipelines/{pipeline_id}/unarchive")
+        return await self._make_request(
+            "POST", f"/api/v1/pipelines/{pipeline_id}/unarchive"
+        )
 
     # --- Pipeline Versioning methods ---
 
@@ -1857,7 +2266,9 @@ class AsyncDatalabClient:
 
     async def list_pipeline_versions(self, pipeline_id: str) -> Dict[str, Any]:
         """List all versions of a pipeline, newest first"""
-        response = await self._make_request("GET", f"/api/v1/pipelines/{pipeline_id}/versions")
+        response = await self._make_request(
+            "GET", f"/api/v1/pipelines/{pipeline_id}/versions"
+        )
         return {
             "versions": [
                 PipelineVersion(
@@ -1909,12 +2320,13 @@ class AsyncDatalabClient:
         file_url: Optional[str] = None,
         page_range: Optional[str] = None,
         output_format: Optional[str] = None,
-        run_evals: bool = False,
         skip_cache: bool = False,
         webhook_url: Optional[str] = None,
         version: Optional[int] = None,
         max_polls: int = 1,
         poll_interval: int = 1,
+        checkpoint_id: Optional[str] = None,
+        processing_location: Optional[str] = None,
     ) -> PipelineExecution:
         """
         Execute a pipeline on a file
@@ -1925,26 +2337,31 @@ class AsyncDatalabClient:
             file_url: URL of the file to process
             page_range: Page range to process (e.g. '0,2-4')
             output_format: Output format (json, html, markdown, chunks)
-            run_evals: Whether to run evaluation steps
             skip_cache: Skip executor cache
             webhook_url: URL to POST when complete
             version: Pipeline version to execute (0=draft, omit=active)
             max_polls: Maximum polling attempts after submission (default: 1)
             poll_interval: Seconds between polls
+            checkpoint_id: Checkpoint from the convert step of an earlier run.
+                The API skips re-parsing and runs only the later steps. You
+                must still send the file.
+            processing_location: Optional residency region, e.g. "eu"
         """
         form_data = self.get_form_params(file_path=file_path, file_url=file_url)
         if page_range is not None:
             form_data.add_field("page_range", page_range)
         if output_format is not None:
             form_data.add_field("output_format", output_format)
-        if run_evals:
-            form_data.add_field("run_evals", str(run_evals))
         if skip_cache:
             form_data.add_field("skip_cache", str(skip_cache))
         if webhook_url is not None:
             form_data.add_field("webhook_url", webhook_url)
         if version is not None:
             form_data.add_field("version", str(version))
+        if checkpoint_id is not None:
+            form_data.add_field("checkpoint_id", checkpoint_id)
+        if processing_location is not None:
+            form_data.add_field("processing_location", processing_location)
 
         response = await self._submit_with_retry(
             f"/api/v1/pipelines/{pipeline_id}/run", data=form_data
@@ -1952,9 +2369,15 @@ class AsyncDatalabClient:
         execution = self._build_pipeline_execution(response)
 
         # Poll if requested
-        if max_polls > 1 and execution.status not in ("completed", "completed_with_errors", "failed"):
+        if max_polls > 1 and execution.status not in (
+            "completed",
+            "completed_with_errors",
+            "failed",
+        ):
             return await self.get_pipeline_execution(
-                execution.execution_id, max_polls=max_polls - 1, poll_interval=poll_interval
+                execution.execution_id,
+                max_polls=max_polls - 1,
+                poll_interval=poll_interval,
             )
         return execution
 
@@ -1994,11 +2417,13 @@ class AsyncDatalabClient:
     ) -> Dict[str, Any]:
         """List recent executions for a pipeline"""
         response = await self._make_request(
-            "GET", f"/api/v1/pipelines/{pipeline_id}/executions?limit={limit}&offset={offset}"
+            "GET",
+            f"/api/v1/pipelines/{pipeline_id}/executions?limit={limit}&offset={offset}",
         )
         return {
             "executions": [
-                self._build_pipeline_execution(e) for e in response.get("executions", [])
+                self._build_pipeline_execution(e)
+                for e in response.get("executions", [])
             ],
             "total": response.get("total", 0),
         }
@@ -2016,7 +2441,8 @@ class AsyncDatalabClient:
             step_index: Zero-based step index
         """
         return await self._make_request(
-            "GET", f"/api/v1/pipelines/executions/{execution_id}/steps/{step_index}/result"
+            "GET",
+            f"/api/v1/pipelines/executions/{execution_id}/steps/{step_index}/result",
         )
 
     @staticmethod
@@ -2031,6 +2457,8 @@ class AsyncDatalabClient:
             active_version=data.get("active_version", 0),
             created=data.get("created"),
             updated=data.get("updated"),
+            reused=data.get("reused", False),
+            draft_differs=data.get("draft_differs", False),
         )
 
     @staticmethod
@@ -2046,6 +2474,8 @@ class AsyncDatalabClient:
                 finished_at=s.get("finished_at"),
                 error_message=s.get("error_message"),
                 checkpoint_id=s.get("checkpoint_id"),
+                source_step_type=s.get("source_step_type"),
+                checkpoint_reused=s.get("checkpoint_reused"),
             )
             for s in data.get("steps", [])
         ]
@@ -2093,7 +2523,8 @@ class AsyncDatalabClient:
                 created_at=p.get("created_at"),
                 completed_at=p.get("completed_at"),
                 error_message=p.get("error_message"),
-                eval_rubric_id=p.get("eval_rubric_id"),
+                request_description=p.get("request_description"),
+                is_template=p.get("is_template", False),
             )
             for p in response.get("pipelines", [])
         ]
@@ -2106,7 +2537,9 @@ class AsyncDatalabClient:
         Args:
             lookup_key: The lookup key returned when the processor was submitted
         """
-        return await self._make_request("GET", f"/api/v1/custom_processors/{lookup_key}")
+        return await self._make_request(
+            "GET", f"/api/v1/custom_processors/{lookup_key}"
+        )
 
     async def list_custom_processor_versions(self, processor_id: str) -> Dict[str, Any]:
         """
@@ -2308,6 +2741,9 @@ class DatalabClient:
         """
         Execute a custom processor on a document (sync version)
 
+        .. deprecated::
+            Use run_agent() with AgentOptions(processor="cp_XXXXX") instead.
+
         Args:
             file_path: Path to the file to process
             file_url: URL of the file to process
@@ -2317,8 +2753,14 @@ class DatalabClient:
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
         """
+        warnings.warn(
+            "run_custom_processor() uses the deprecated /custom-processor endpoint. "
+            "Use run_agent() with AgentOptions(processor='cp_XXXXX') instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         return self._run_async(
-            self._async_client.run_custom_processor(
+            self._async_client._run_custom_processor(
                 file_path=file_path,
                 file_url=file_url,
                 options=options,
@@ -2342,21 +2784,24 @@ class DatalabClient:
         """Execute a custom processor on a document (sync version)
 
         .. deprecated::
-            Use run_custom_processor() instead.
+            Use run_agent() with AgentOptions(processor="cp_XXXXX") instead.
         """
         warnings.warn(
-            "run_custom_pipeline() is deprecated. Use run_custom_processor() instead.",
+            "run_custom_pipeline() and run_custom_processor() are deprecated. "
+            "Use run_agent() with AgentOptions(processor='cp_XXXXX') instead.",
             DeprecationWarning,
             stacklevel=2,
         )
-        return self.run_custom_processor(
-            file_path=file_path,
-            file_url=file_url,
-            options=options,
-            save_output=save_output,
-            stream_response_to=stream_response_to,
-            max_polls=max_polls,
-            poll_interval=poll_interval,
+        return self._run_async(
+            self._async_client._run_custom_processor(
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                save_output=save_output,
+                stream_response_to=stream_response_to,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
         )
 
     def track_changes(
@@ -2402,6 +2847,7 @@ class DatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        processing_location: Optional[str] = None,
     ) -> Union[CreateDocumentResult, FileResult]:
         """
         Create a DOCX document from markdown (sync version)
@@ -2424,6 +2870,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                processing_location=processing_location,
             )
         )
 
@@ -2486,6 +2933,77 @@ class DatalabClient:
             )
         )
 
+    def run_agent(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[AgentOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[AgentResult, FileResult]:
+        """Run a published agent processor on a document (sync version)"""
+        return self._run_async(
+            self._async_client.run_agent(
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                save_output=save_output,
+                stream_response_to=stream_response_to,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def form_fields(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[FormFieldsOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> Union[FormFieldsResult, FileResult]:
+        """Find the fillable fields in a PDF or image (sync version)"""
+        return self._run_async(
+            self._async_client.form_fields(
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                save_output=save_output,
+                stream_response_to=stream_response_to,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def generate_extraction_schemas(
+        self,
+        checkpoint_id: str,
+        webhook_url: Optional[str] = None,
+        processing_location: Optional[str] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+    ) -> ExtractionSchemaSuggestions:
+        """Suggest extraction schemas for a parsed document (sync version)"""
+        return self._run_async(
+            self._async_client.generate_extraction_schemas(
+                checkpoint_id=checkpoint_id,
+                webhook_url=webhook_url,
+                processing_location=processing_location,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+            )
+        )
+
+    def delete_result(self, request_id: str) -> Dict[str, Any]:
+        """Delete the stored result of a finished request (sync version)"""
+        return self._run_async(self._async_client.delete_result(request_id=request_id))
+
+    # --- Eval Rubric methods (sync) ---
+
     # Workflow methods (sync)
     def create_workflow(
         self,
@@ -2546,6 +3064,7 @@ class DatalabClient:
     def upload_files(
         self,
         file_paths: Union[str, Path, list[Union[str, Path]]],
+        processing_location: Optional[str] = None,
     ) -> Union[UploadedFileMetadata, list[UploadedFileMetadata]]:
         """
         Upload one or more files to Datalab storage (sync version)
@@ -2559,6 +3078,7 @@ class DatalabClient:
 
         Args:
             file_paths: Single file path or list of file paths to upload
+            processing_location: Optional residency region, e.g. "eu"
 
         Returns:
             If single file: UploadedFileMetadata object
@@ -2571,7 +3091,11 @@ class DatalabClient:
             # Upload multiple files
             metadatas = client.upload_files(["doc1.pdf", "doc2.pdf"])
         """
-        return self._run_async(self._async_client.upload_files(file_paths=file_paths))
+        return self._run_async(
+            self._async_client.upload_files(
+                file_paths=file_paths, processing_location=processing_location
+            )
+        )
 
     def list_files(
         self,
@@ -2677,28 +3201,40 @@ class DatalabClient:
     # --- Extraction Schema methods (sync) ---
 
     def create_extraction_schema(
-        self, name: str, schema_json: Dict[str, Any], description: Optional[str] = None,
+        self,
+        name: str,
+        schema_json: Dict[str, Any],
+        description: Optional[str] = None,
     ) -> ExtractionSchema:
         """Create a new extraction schema (sync version)"""
         return self._run_async(
             self._async_client.create_extraction_schema(
-                name=name, schema_json=schema_json, description=description,
+                name=name,
+                schema_json=schema_json,
+                description=description,
             )
         )
 
     def list_extraction_schemas(
-        self, limit: int = 50, offset: int = 0, include_archived: bool = False,
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        include_archived: bool = False,
     ) -> Dict[str, Any]:
         """List extraction schemas (sync version)"""
         return self._run_async(
             self._async_client.list_extraction_schemas(
-                limit=limit, offset=offset, include_archived=include_archived,
+                limit=limit,
+                offset=offset,
+                include_archived=include_archived,
             )
         )
 
     def get_extraction_schema(self, schema_id: str) -> ExtractionSchema:
         """Get an extraction schema by ID (sync version)"""
-        return self._run_async(self._async_client.get_extraction_schema(schema_id=schema_id))
+        return self._run_async(
+            self._async_client.get_extraction_schema(schema_id=schema_id)
+        )
 
     def update_extraction_schema(
         self,
@@ -2712,31 +3248,45 @@ class DatalabClient:
         """Update an extraction schema (sync version)"""
         return self._run_async(
             self._async_client.update_extraction_schema(
-                schema_id=schema_id, name=name, description=description,
-                schema_json=schema_json, archived=archived,
+                schema_id=schema_id,
+                name=name,
+                description=description,
+                schema_json=schema_json,
+                archived=archived,
                 create_new_version=create_new_version,
             )
         )
 
     def delete_extraction_schema(self, schema_id: str) -> ExtractionSchema:
         """Delete (archive) an extraction schema (sync version)"""
-        return self._run_async(self._async_client.delete_extraction_schema(schema_id=schema_id))
+        return self._run_async(
+            self._async_client.delete_extraction_schema(schema_id=schema_id)
+        )
 
     # --- Pipeline methods (sync) ---
 
-    def create_pipeline(self, steps: list[PipelineProcessor]) -> PipelineConfig:
+    def create_pipeline(
+        self, steps: list[PipelineProcessor], reuse_draft: bool = False
+    ) -> PipelineConfig:
         """Create a new pipeline (sync version)"""
-        return self._run_async(self._async_client.create_pipeline(steps=steps))
+        return self._run_async(
+            self._async_client.create_pipeline(steps=steps, reuse_draft=reuse_draft)
+        )
 
     def list_pipelines(
-        self, saved_only: bool = True, include_archived: bool = False,
-        limit: int = 50, offset: int = 0,
+        self,
+        saved_only: bool = True,
+        include_archived: bool = False,
+        limit: int = 50,
+        offset: int = 0,
     ) -> Dict[str, Any]:
         """List pipelines (sync version)"""
         return self._run_async(
             self._async_client.list_pipelines(
-                saved_only=saved_only, include_archived=include_archived,
-                limit=limit, offset=offset,
+                saved_only=saved_only,
+                include_archived=include_archived,
+                limit=limit,
+                offset=offset,
             )
         )
 
@@ -2744,7 +3294,9 @@ class DatalabClient:
         """Get a pipeline by ID (sync version)"""
         return self._run_async(self._async_client.get_pipeline(pipeline_id=pipeline_id))
 
-    def update_pipeline(self, pipeline_id: str, steps: list[PipelineProcessor]) -> PipelineConfig:
+    def update_pipeline(
+        self, pipeline_id: str, steps: list[PipelineProcessor]
+    ) -> PipelineConfig:
         """Update pipeline steps (sync version)"""
         return self._run_async(
             self._async_client.update_pipeline(pipeline_id=pipeline_id, steps=steps)
@@ -2758,39 +3310,53 @@ class DatalabClient:
 
     def archive_pipeline(self, pipeline_id: str) -> Dict[str, Any]:
         """Archive a pipeline (sync version)"""
-        return self._run_async(self._async_client.archive_pipeline(pipeline_id=pipeline_id))
+        return self._run_async(
+            self._async_client.archive_pipeline(pipeline_id=pipeline_id)
+        )
 
     def unarchive_pipeline(self, pipeline_id: str) -> Dict[str, Any]:
         """Unarchive a pipeline (sync version)"""
-        return self._run_async(self._async_client.unarchive_pipeline(pipeline_id=pipeline_id))
+        return self._run_async(
+            self._async_client.unarchive_pipeline(pipeline_id=pipeline_id)
+        )
 
     def create_pipeline_version(
-        self, pipeline_id: str, description: Optional[str] = None,
+        self,
+        pipeline_id: str,
+        description: Optional[str] = None,
     ) -> PipelineVersion:
         """Create a pipeline version snapshot (sync version)"""
         return self._run_async(
             self._async_client.create_pipeline_version(
-                pipeline_id=pipeline_id, description=description,
+                pipeline_id=pipeline_id,
+                description=description,
             )
         )
 
     def list_pipeline_versions(self, pipeline_id: str) -> Dict[str, Any]:
         """List pipeline versions (sync version)"""
-        return self._run_async(self._async_client.list_pipeline_versions(pipeline_id=pipeline_id))
+        return self._run_async(
+            self._async_client.list_pipeline_versions(pipeline_id=pipeline_id)
+        )
 
     def discard_pipeline_draft(
-        self, pipeline_id: str, version: Optional[int] = None,
+        self,
+        pipeline_id: str,
+        version: Optional[int] = None,
     ) -> PipelineConfig:
         """Discard draft and revert to a published version (sync version)"""
         return self._run_async(
             self._async_client.discard_pipeline_draft(
-                pipeline_id=pipeline_id, version=version,
+                pipeline_id=pipeline_id,
+                version=version,
             )
         )
 
     def get_pipeline_rate(self, pipeline_id: str) -> Dict[str, Any]:
         """Get pipeline per-page rate (sync version)"""
-        return self._run_async(self._async_client.get_pipeline_rate(pipeline_id=pipeline_id))
+        return self._run_async(
+            self._async_client.get_pipeline_rate(pipeline_id=pipeline_id)
+        )
 
     def run_pipeline(
         self,
@@ -2799,41 +3365,59 @@ class DatalabClient:
         file_url: Optional[str] = None,
         page_range: Optional[str] = None,
         output_format: Optional[str] = None,
-        run_evals: bool = False,
         skip_cache: bool = False,
         webhook_url: Optional[str] = None,
         version: Optional[int] = None,
         max_polls: int = 1,
         poll_interval: int = 1,
+        checkpoint_id: Optional[str] = None,
+        processing_location: Optional[str] = None,
     ) -> PipelineExecution:
         """Execute a pipeline on a file (sync version)"""
         return self._run_async(
             self._async_client.run_pipeline(
-                pipeline_id=pipeline_id, file_path=file_path, file_url=file_url,
-                page_range=page_range, output_format=output_format,
-                run_evals=run_evals, skip_cache=skip_cache,
-                webhook_url=webhook_url, version=version,
-                max_polls=max_polls, poll_interval=poll_interval,
+                pipeline_id=pipeline_id,
+                file_path=file_path,
+                file_url=file_url,
+                page_range=page_range,
+                output_format=output_format,
+                skip_cache=skip_cache,
+                webhook_url=webhook_url,
+                version=version,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+                checkpoint_id=checkpoint_id,
+                processing_location=processing_location,
             )
         )
 
     def get_pipeline_execution(
-        self, execution_id: str, max_polls: int = 1, poll_interval: int = 1,
+        self,
+        execution_id: str,
+        max_polls: int = 1,
+        poll_interval: int = 1,
     ) -> PipelineExecution:
         """Get pipeline execution status (sync version)"""
         return self._run_async(
             self._async_client.get_pipeline_execution(
-                execution_id=execution_id, max_polls=max_polls, poll_interval=poll_interval,
+                execution_id=execution_id,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
             )
         )
 
     def list_pipeline_executions(
-        self, pipeline_id: str, limit: int = 20, offset: int = 0,
+        self,
+        pipeline_id: str,
+        limit: int = 20,
+        offset: int = 0,
     ) -> Dict[str, Any]:
         """List pipeline executions (sync version)"""
         return self._run_async(
             self._async_client.list_pipeline_executions(
-                pipeline_id=pipeline_id, limit=limit, offset=offset,
+                pipeline_id=pipeline_id,
+                limit=limit,
+                offset=offset,
             )
         )
 
@@ -2841,13 +3425,16 @@ class DatalabClient:
         """Get a pipeline execution step result (sync version)"""
         return self._run_async(
             self._async_client.get_step_result(
-                execution_id=execution_id, step_index=step_index,
+                execution_id=execution_id,
+                step_index=step_index,
             )
         )
 
     # --- Custom Processor Management methods (sync) ---
 
-    def list_custom_processors(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+    def list_custom_processors(
+        self, limit: int = 50, offset: int = 0
+    ) -> Dict[str, Any]:
         """List custom processors (sync version)"""
         return self._run_async(
             self._async_client.list_custom_processors(limit=limit, offset=offset)
@@ -2865,11 +3452,14 @@ class DatalabClient:
             self._async_client.list_custom_processor_versions(processor_id=processor_id)
         )
 
-    def set_active_processor_version(self, processor_id: str, version: int) -> Dict[str, Any]:
+    def set_active_processor_version(
+        self, processor_id: str, version: int
+    ) -> Dict[str, Any]:
         """Set active processor version (sync version)"""
         return self._run_async(
             self._async_client.set_active_processor_version(
-                processor_id=processor_id, version=version,
+                processor_id=processor_id,
+                version=version,
             )
         )
 

@@ -7,9 +7,9 @@ readme = "README.md"
 license = "MIT"
 repository = "https://github.com/datalab-to/sdk"
 keywords = ["datalab", "sdk", "document-intelligence", "api"]
-version = "0.5.0"
+version = "0.6.0"
 description = "SDK for the Datalab document intelligence API"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.12.14",
     "click>=8.2.1",
@@ -55,3 +55,12 @@ dev = [
     "pytest-xdist>=3.8.0",
     "ruff>=0.12.2",
 ]
+
+# The SDK keeps its own ruff settings. In the monorepo, this section stops
+# ruff from using the monorepo ruff.toml for files under sdk/.
+[tool.ruff]
+target-version = "py311"
+include = ["*.py", "*.pyi"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

@@ -6,7 +6,18 @@ supporting document conversion, extraction, segmentation, and more.
 """
 
 from .client import DatalabClient, AsyncDatalabClient
-from .exceptions import DatalabError, DatalabAPIError, DatalabTimeoutError
+from .exceptions import (
+    DatalabError,
+    DatalabAPIError,
+    DatalabAuthenticationError,
+    DatalabPaymentRequiredError,
+    DatalabNotFoundError,
+    DatalabRateLimitError,
+    DatalabServerError,
+    DatalabTimeoutError,
+    DatalabFileError,
+    DatalabValidationError,
+)
 from .models import (
     ConversionResult,
     CreateDocumentResult,
@@ -21,6 +32,11 @@ from .models import (
     OCROptions,
     FormFillingOptions,
     FormFillingResult,
+    FormFieldsOptions,
+    FormFieldsResult,
+    AgentOptions,
+    AgentResult,
+    ExtractionSchemaSuggestions,
     Workflow,
     WorkflowStep,
     WorkflowExecution,
@@ -43,7 +59,14 @@ __all__ = [
     "AsyncDatalabClient",
     "DatalabError",
     "DatalabAPIError",
+    "DatalabAuthenticationError",
+    "DatalabPaymentRequiredError",
+    "DatalabNotFoundError",
+    "DatalabRateLimitError",
+    "DatalabServerError",
     "DatalabTimeoutError",
+    "DatalabFileError",
+    "DatalabValidationError",
     "ConversionResult",
     "CreateDocumentResult",
     "FileResult",
@@ -57,6 +80,11 @@ __all__ = [
     "OCROptions",
     "FormFillingOptions",
     "FormFillingResult",
+    "FormFieldsOptions",
+    "FormFieldsResult",
+    "AgentOptions",
+    "AgentResult",
+    "ExtractionSchemaSuggestions",
     "Workflow",
     "WorkflowStep",
     "WorkflowExecution",

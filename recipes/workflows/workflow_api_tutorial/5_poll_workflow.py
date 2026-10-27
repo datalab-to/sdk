@@ -26,36 +26,28 @@ from datalab_sdk import DatalabClient
 def main():
     parser = argparse.ArgumentParser(description="Check workflow execution status")
     parser.add_argument(
-        "--execution_id",
-        type=int,
-        required=True,
-        help="ID of the execution to check"
+        "--execution_id", type=int, required=True, help="ID of the execution to check"
     )
     parser.add_argument(
-        "--single",
-        action="store_true",
-        help="Single status check (don't poll)"
+        "--single", action="store_true", help="Single status check (don't poll)"
     )
     parser.add_argument(
         "--max_polls",
         type=int,
         default=60,
-        help="Maximum number of polling attempts (default: 60)"
+        help="Maximum number of polling attempts (default: 60)",
     )
     parser.add_argument(
         "--poll_interval",
         type=int,
         default=2,
-        help="Seconds between polls (default: 2)"
+        help="Seconds between polls (default: 2)",
     )
-    parser.add_argument(
-        "--save",
-        help="Save results to file (e.g., results.json)"
-    )
+    parser.add_argument("--save", help="Save results to file (e.g., results.json)")
     parser.add_argument(
         "--download",
         action="store_true",
-        help="Download actual results from presigned URLs (default: just show URLs)"
+        help="Download actual results from presigned URLs (default: just show URLs)",
     )
     args = parser.parse_args()
 
@@ -68,7 +60,9 @@ def main():
     else:
         total_time = args.max_polls * args.poll_interval
         print(f"⏳ Polling execution {args.execution_id} status...")
-        print(f"   Max time: {total_time} seconds ({args.max_polls} polls × {args.poll_interval}s)\n")
+        print(
+            f"   Max time: {total_time} seconds ({args.max_polls} polls × {args.poll_interval}s)\n"
+        )
         max_polls = args.max_polls
 
     # Get execution status (with optional polling and download)
@@ -76,11 +70,11 @@ def main():
         execution_id=args.execution_id,
         max_polls=max_polls,
         poll_interval=args.poll_interval,
-        download_results=args.download
+        download_results=args.download,
     )
 
     # Display status
-    print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print(f"Execution ID:  {execution.id}")
     print(f"Workflow ID:   {execution.workflow_id}")
     print(f"Status:        {execution.status}")
@@ -111,7 +105,7 @@ def main():
         print("⏱️  Workflow is still processing...")
         if not args.single:
             print(f"\n   Timed out after {args.max_polls} polls.")
-            print(f"   Run again to continue checking:")
+            print("   Run again to continue checking:")
             print(f"   python examples/poll_workflow.py --execution_id {execution.id}")
 
     else:
@@ -119,10 +113,12 @@ def main():
 
     # Show next steps
     if execution.status == "IN_PROGRESS":
-        print(f"\n💡 To continue polling:")
+        print("\n💡 To continue polling:")
         print(f"   python examples/poll_workflow.py --execution_id {execution.id}")
-        print(f"\n💡 Or use the CLI:")
-        print(f"   datalab get-execution-status --execution_id {execution.id} --max_polls 60")
+        print("\n💡 Or use the CLI:")
+        print(
+            f"   datalab get-execution-status --execution_id {execution.id} --max_polls 60"
+        )
 
 
 if __name__ == "__main__":

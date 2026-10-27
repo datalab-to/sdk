@@ -18,16 +18,9 @@ from datalab_sdk import DatalabClient, InputConfig
 def main():
     parser = argparse.ArgumentParser(description="Execute a workflow")
     parser.add_argument(
-        "--workflow_id",
-        type=int,
-        required=True,
-        help="ID of the workflow to execute"
+        "--workflow_id", type=int, required=True, help="ID of the workflow to execute"
     )
-    parser.add_argument(
-        "--file_url",
-        required=True,
-        help="URL of the file to process"
-    )
+    parser.add_argument("--file_url", required=True, help="URL of the file to process")
     args = parser.parse_args()
 
     # Initialize client (uses DATALAB_API_KEY environment variable)
@@ -36,19 +29,16 @@ def main():
     print(f"🚀 Executing workflow {args.workflow_id}...\n")
 
     # Create input configuration
-    input_config = InputConfig(
-        file_urls=[args.file_url]
-    )
+    input_config = InputConfig(file_urls=[args.file_url])
 
     # Execute the workflow
     # Note: This returns immediately - it does NOT wait for completion
     execution = client.execute_workflow(
-        workflow_id=args.workflow_id,
-        input_config=input_config
+        workflow_id=args.workflow_id, input_config=input_config
     )
 
     print("✅ Workflow execution triggered successfully!\n")
-    print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print(f"Execution ID:  {execution.id}")
     print(f"Workflow ID:   {execution.workflow_id}")
     print(f"Status:        {execution.status}")
@@ -58,7 +48,9 @@ def main():
     print("💡 Next steps:")
     print()
     print("   1. Check execution status (single check):")
-    print(f"      python examples/poll_workflow.py --execution_id {execution.id} --single")
+    print(
+        f"      python examples/poll_workflow.py --execution_id {execution.id} --single"
+    )
     print()
     print("   2. Poll until complete:")
     print(f"      python examples/poll_workflow.py --execution_id {execution.id}")

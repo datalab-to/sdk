@@ -17,7 +17,6 @@ from datalab_sdk.models import (
     SegmentOptions,
     CustomPipelineOptions,
     CustomProcessorOptions,
-    TrackChangesOptions,
     OCROptions,
     ExtractionSchema,
     PipelineProcessor,
@@ -314,7 +313,9 @@ class TestExtractMethod:
             page_schema='{"properties": {"name": {"type": "string"}}}',
         )
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with pytest.raises(ValueError, match="Either file_path/file_url or options.checkpoint_id"):
+            with pytest.raises(
+                ValueError, match="Either file_path/file_url or options.checkpoint_id"
+            ):
                 await client.extract(options=options)
 
 
@@ -385,12 +386,10 @@ class TestCustomPipelineMethod:
             "status": "complete",
             "output_format": "markdown",
             "markdown": "# Custom Output",
-            "evaluation": {"eval_definition_name": "test", "evaluations": [], "total_items_evaluated": 0},
         }
 
         options = CustomPipelineOptions(
             pipeline_id="cp_abc12",
-            run_eval=True,
         )
 
         async with AsyncDatalabClient(api_key="test-key") as client:
@@ -407,7 +406,6 @@ class TestCustomPipelineMethod:
 
                     assert result.success is True
                     assert result.markdown == "# Custom Output"
-                    assert result.evaluation is not None
 
 
 class TestTrackChangesMethod:
@@ -479,9 +477,7 @@ class TestCreateDocumentMethod:
                     mock_request.return_value = mock_initial_response
                     mock_poll.return_value = mock_result_response
 
-                    result = await client.create_document(
-                        markdown="# Hello World"
-                    )
+                    result = await client.create_document(markdown="# Hello World")
 
                     assert isinstance(result, CreateDocumentResult)
                     assert result.success is True
@@ -823,8 +819,12 @@ class TestExtractWithSchemaId:
         options = ExtractOptions(schema_id="sch_k8Hx9mP2nQ4v")
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
-                with patch.object(client, "_poll_result", new_callable=AsyncMock) as mock_poll:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
+                with patch.object(
+                    client, "_poll_result", new_callable=AsyncMock
+                ) as mock_poll:
                     mock_req.return_value = mock_initial
                     mock_poll.return_value = mock_result
                     result = await client.extract(pdf_file, options=options)
@@ -854,7 +854,9 @@ class TestExtractWithSchemaId:
             schema_version=2,
         )
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with pytest.raises(ValueError, match="schema_version can only be used with schema_id"):
+            with pytest.raises(
+                ValueError, match="schema_version can only be used with schema_id"
+            ):
                 await client.extract(file_path="test.pdf", options=options)
 
     def test_extract_options_form_data_suppresses_empty_page_schema(self):
@@ -889,27 +891,15 @@ class TestCustomProcessorOptions:
 
     def test_form_data_includes_new_fields(self):
         options = CustomProcessorOptions(
-            pipeline_id="cp_abc12", version=3, paginate=True, disable_image_extraction=True,
+            pipeline_id="cp_abc12",
+            version=3,
+            paginate=True,
+            disable_image_extraction=True,
         )
         form_data = options.to_form_data()
         assert "version" in form_data
         assert "paginate" in form_data
         assert "disable_image_extraction" in form_data
-
-
-class TestConvertEvalRubricId:
-    """Test eval_rubric_id on ConvertOptions"""
-
-    def test_default_none(self):
-        options = ConvertOptions()
-        assert options.eval_rubric_id is None
-        form_data = options.to_form_data()
-        assert "eval_rubric_id" not in form_data
-
-    def test_serialized_when_set(self):
-        options = ConvertOptions(eval_rubric_id=42)
-        form_data = options.to_form_data()
-        assert "eval_rubric_id" in form_data
 
 
 class TestRunCustomProcessorMethod:
@@ -935,11 +925,17 @@ class TestRunCustomProcessorMethod:
         options = CustomProcessorOptions(pipeline_id="cp_abc12")
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
-                with patch.object(client, "_poll_result", new_callable=AsyncMock) as mock_poll:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
+                with patch.object(
+                    client, "_poll_result", new_callable=AsyncMock
+                ) as mock_poll:
                     mock_req.return_value = mock_initial
                     mock_poll.return_value = mock_result
-                    result = await client.run_custom_processor(pdf_file, options=options)
+                    result = await client.run_custom_processor(
+                        pdf_file, options=options
+                    )
                     assert result.success is True
 
     @pytest.mark.asyncio
@@ -962,14 +958,20 @@ class TestRunCustomProcessorMethod:
         options = CustomProcessorOptions(pipeline_id="cp_abc12")
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
-                with patch.object(client, "_poll_result", new_callable=AsyncMock) as mock_poll:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
+                with patch.object(
+                    client, "_poll_result", new_callable=AsyncMock
+                ) as mock_poll:
                     mock_req.return_value = mock_initial
                     mock_poll.return_value = mock_result
 
                     with warnings.catch_warnings(record=True) as w:
                         warnings.simplefilter("always")
-                        result = await client.run_custom_pipeline(pdf_file, options=options)
+                        result = await client.run_custom_pipeline(
+                            pdf_file, options=options
+                        )
                         assert len(w) == 1
                         assert issubclass(w[0].category, DeprecationWarning)
                         assert "run_custom_processor" in str(w[0].message)
@@ -982,15 +984,22 @@ class TestExtractionSchemaCRUD:
     @pytest.mark.asyncio
     async def test_create_extraction_schema(self):
         mock_response = {
-            "id": 1, "schema_id": "sch_abc123", "name": "Invoice Schema",
+            "id": 1,
+            "schema_id": "sch_abc123",
+            "name": "Invoice Schema",
             "description": "Extract invoice fields",
             "schema_json": {"properties": {"total": {"type": "number"}}},
-            "version": 1, "version_history": None, "archived": False,
-            "created": "2026-01-01T00:00:00", "updated": "2026-01-01T00:00:00",
+            "version": 1,
+            "version_history": None,
+            "archived": False,
+            "created": "2026-01-01T00:00:00",
+            "updated": "2026-01-01T00:00:00",
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
                 mock_req.return_value = mock_response
                 result = await client.create_extraction_schema(
                     name="Invoice Schema",
@@ -1003,17 +1012,27 @@ class TestExtractionSchemaCRUD:
     @pytest.mark.asyncio
     async def test_list_extraction_schemas(self):
         mock_response = {
-            "schemas": [{
-                "id": 1, "schema_id": "sch_abc123", "name": "Schema 1",
-                "description": None, "schema_json": {"properties": {}},
-                "version": 1, "version_history": None, "archived": False,
-                "created": "2026-01-01T00:00:00", "updated": "2026-01-01T00:00:00",
-            }],
+            "schemas": [
+                {
+                    "id": 1,
+                    "schema_id": "sch_abc123",
+                    "name": "Schema 1",
+                    "description": None,
+                    "schema_json": {"properties": {}},
+                    "version": 1,
+                    "version_history": None,
+                    "archived": False,
+                    "created": "2026-01-01T00:00:00",
+                    "updated": "2026-01-01T00:00:00",
+                }
+            ],
             "total": 1,
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
                 mock_req.return_value = mock_response
                 result = await client.list_extraction_schemas(limit=10)
                 assert result["total"] == 1
@@ -1022,14 +1041,22 @@ class TestExtractionSchemaCRUD:
     @pytest.mark.asyncio
     async def test_delete_extraction_schema(self):
         mock_response = {
-            "id": 1, "schema_id": "sch_abc123", "name": "Archived",
-            "description": None, "schema_json": {"properties": {}},
-            "version": 1, "version_history": None, "archived": True,
-            "created": "2026-01-01T00:00:00", "updated": "2026-01-04T00:00:00",
+            "id": 1,
+            "schema_id": "sch_abc123",
+            "name": "Archived",
+            "description": None,
+            "schema_json": {"properties": {}},
+            "version": 1,
+            "version_history": None,
+            "archived": True,
+            "created": "2026-01-01T00:00:00",
+            "updated": "2026-01-04T00:00:00",
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
                 mock_req.return_value = mock_response
                 result = await client.delete_extraction_schema("sch_abc123")
                 assert isinstance(result, ExtractionSchema)
@@ -1042,14 +1069,21 @@ class TestPipelineCRUD:
     @pytest.mark.asyncio
     async def test_create_pipeline(self):
         mock_response = {
-            "id": 1, "pipeline_id": "pl_abc123", "name": None,
+            "id": 1,
+            "pipeline_id": "pl_abc123",
+            "name": None,
             "steps": [{"type": "convert", "settings": {}}],
-            "is_saved": False, "archived": False, "active_version": 0,
-            "created": "2026-01-01T00:00:00", "updated": "2026-01-01T00:00:00",
+            "is_saved": False,
+            "archived": False,
+            "active_version": 0,
+            "created": "2026-01-01T00:00:00",
+            "updated": "2026-01-01T00:00:00",
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
                 mock_req.return_value = mock_response
                 result = await client.create_pipeline(
                     steps=[PipelineProcessor(type="convert")]
@@ -1061,17 +1095,26 @@ class TestPipelineCRUD:
     @pytest.mark.asyncio
     async def test_list_pipelines(self):
         mock_response = {
-            "pipelines": [{
-                "id": 1, "pipeline_id": "pl_abc123", "name": "My Pipeline",
-                "steps": [], "is_saved": True, "archived": False,
-                "active_version": 1,
-                "created": "2026-01-01T00:00:00", "updated": "2026-01-01T00:00:00",
-            }],
+            "pipelines": [
+                {
+                    "id": 1,
+                    "pipeline_id": "pl_abc123",
+                    "name": "My Pipeline",
+                    "steps": [],
+                    "is_saved": True,
+                    "archived": False,
+                    "active_version": 1,
+                    "created": "2026-01-01T00:00:00",
+                    "updated": "2026-01-01T00:00:00",
+                }
+            ],
             "total": 1,
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
                 mock_req.return_value = mock_response
                 result = await client.list_pipelines()
                 assert result["total"] == 1
@@ -1080,14 +1123,21 @@ class TestPipelineCRUD:
     @pytest.mark.asyncio
     async def test_get_pipeline(self):
         mock_response = {
-            "id": 1, "pipeline_id": "pl_abc123", "name": "Test",
+            "id": 1,
+            "pipeline_id": "pl_abc123",
+            "name": "Test",
             "steps": [{"type": "convert", "settings": {}}],
-            "is_saved": True, "archived": False, "active_version": 1,
-            "created": "2026-01-01T00:00:00", "updated": "2026-01-01T00:00:00",
+            "is_saved": True,
+            "archived": False,
+            "active_version": 1,
+            "created": "2026-01-01T00:00:00",
+            "updated": "2026-01-01T00:00:00",
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
                 mock_req.return_value = mock_response
                 result = await client.get_pipeline("pl_abc123")
                 assert result.pipeline_id == "pl_abc123"
@@ -1103,8 +1153,10 @@ class TestPipelineExecution:
         pdf_file.write_bytes(b"%PDF-1.4\n%Test PDF content\n%%EOF\n")
 
         mock_response = {
-            "execution_id": "pex_abc123", "pipeline_id": "pl_abc123",
-            "pipeline_version": 1, "status": "pending",
+            "execution_id": "pex_abc123",
+            "pipeline_id": "pl_abc123",
+            "pipeline_version": 1,
+            "status": "pending",
             "steps": [
                 {"step_index": 0, "step_type": "convert", "status": "pending"},
             ],
@@ -1112,7 +1164,9 @@ class TestPipelineExecution:
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_submit_with_retry", new_callable=AsyncMock) as mock_submit:
+            with patch.object(
+                client, "_submit_with_retry", new_callable=AsyncMock
+            ) as mock_submit:
                 mock_submit.return_value = mock_response
                 result = await client.run_pipeline("pl_abc123", file_path=pdf_file)
                 assert isinstance(result, PipelineExecution)
@@ -1123,17 +1177,25 @@ class TestPipelineExecution:
     @pytest.mark.asyncio
     async def test_get_pipeline_execution(self):
         mock_response = {
-            "execution_id": "pex_abc123", "pipeline_id": "pl_abc123",
-            "pipeline_version": 1, "status": "completed",
+            "execution_id": "pex_abc123",
+            "pipeline_id": "pl_abc123",
+            "pipeline_version": 1,
+            "status": "completed",
             "steps": [
-                {"step_index": 0, "step_type": "convert", "status": "completed",
-                 "result_url": "/api/v1/pipelines/executions/pex_abc123/steps/0/result"},
+                {
+                    "step_index": 0,
+                    "step_type": "convert",
+                    "status": "completed",
+                    "result_url": "/api/v1/pipelines/executions/pex_abc123/steps/0/result",
+                },
             ],
             "created": "2026-01-01T00:00:00",
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
                 mock_req.return_value = mock_response
                 result = await client.get_pipeline_execution("pex_abc123")
                 assert result.status == "completed"
@@ -1146,17 +1208,24 @@ class TestCustomProcessorManagement:
     @pytest.mark.asyncio
     async def test_list_custom_processors(self):
         mock_response = {
-            "pipelines": [{
-                "processor_id": "cp_abc12", "name": "My Processor",
-                "status": "completed", "success": True,
-                "active_version": 1, "max_version": 2,
-                "iteration_in_progress": False,
-                "created_at": "2026-01-01T00:00:00",
-            }],
+            "pipelines": [
+                {
+                    "processor_id": "cp_abc12",
+                    "name": "My Processor",
+                    "status": "completed",
+                    "success": True,
+                    "active_version": 1,
+                    "max_version": 2,
+                    "iteration_in_progress": False,
+                    "created_at": "2026-01-01T00:00:00",
+                }
+            ],
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
                 mock_req.return_value = mock_response
                 result = await client.list_custom_processors()
                 assert len(result["processors"]) == 1
@@ -1167,15 +1236,27 @@ class TestCustomProcessorManagement:
     async def test_list_custom_processor_versions(self):
         mock_response = {
             "versions": [
-                {"version": 2, "request_description": "Add totals", "created_at": "2026-01-02T00:00:00",
-                 "runtime": 45.2, "is_active": True},
-                {"version": 1, "request_description": "Initial", "created_at": "2026-01-01T00:00:00",
-                 "runtime": 30.0, "is_active": False},
+                {
+                    "version": 2,
+                    "request_description": "Add totals",
+                    "created_at": "2026-01-02T00:00:00",
+                    "runtime": 45.2,
+                    "is_active": True,
+                },
+                {
+                    "version": 1,
+                    "request_description": "Initial",
+                    "created_at": "2026-01-01T00:00:00",
+                    "runtime": 30.0,
+                    "is_active": False,
+                },
             ],
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_req:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_req:
                 mock_req.return_value = mock_response
                 result = await client.list_custom_processor_versions("cp_abc12")
                 assert len(result["versions"]) == 2
@@ -1193,9 +1274,9 @@ class TestPipelineProcessorModel:
 
     def test_to_dict_with_custom_processor(self):
         step = PipelineProcessor(
-            type="custom", settings={"mode": "fast"},
-            custom_processor_id="cp_abc12", eval_rubric_id=5,
+            type="custom",
+            settings={"mode": "fast"},
+            custom_processor_id="cp_abc12",
         )
         d = step.to_dict()
         assert d["custom_processor_id"] == "cp_abc12"
-        assert d["eval_rubric_id"] == 5

@@ -34,16 +34,16 @@ def main():
             print(f"Found {len(step_types)} step type(s):\n")
 
             for step_type in step_types:
-                print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+                print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
                 print(f"Key:         {step_type.get('type')}")
                 print(f"Version:         {step_type.get('version')}")
                 print(f"Name:        {step_type.get('name')}")
-                if step_type.get('description'):
+                if step_type.get("description"):
                     print(f"Description: {step_type['description']}")
 
-                if step_type.get('settings_schema'):
-                    print(f"\nSettings Schema:")
-                    print(json.dumps(step_type['settings_schema'], indent=2))
+                if step_type.get("settings_schema"):
+                    print("\nSettings Schema:")
+                    print(json.dumps(step_type["settings_schema"], indent=2))
                 print()
         else:
             print("⚠️  No step types returned from API")
@@ -52,6 +52,7 @@ def main():
     except Exception as e:
         print(f"❌ Error fetching step types: {e}")
         import traceback
+
         traceback.print_exc()
 
 

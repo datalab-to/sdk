@@ -7,7 +7,6 @@ from unittest.mock import patch, AsyncMock
 
 from datalab_sdk import DatalabClient, AsyncDatalabClient
 from datalab_sdk.models import Workflow, WorkflowStep, WorkflowExecution, InputConfig
-from datalab_sdk.exceptions import DatalabAPIError
 
 
 class TestWorkflowMethods:
@@ -27,7 +26,10 @@ class TestWorkflowMethods:
                 step_key="marker_extract",
                 unique_name="marker_extract",
                 settings={
-                    "page_schema": {"title": {"type": "string"}, "summary": {"type": "string"}}
+                    "page_schema": {
+                        "title": {"type": "string"},
+                        "summary": {"type": "string"},
+                    }
                 },
                 depends_on=["marker_parse"],
             ),
@@ -62,7 +64,9 @@ class TestWorkflowMethods:
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_request:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_request:
                 mock_request.return_value = mock_response
 
                 # Create workflow
@@ -99,7 +103,9 @@ class TestWorkflowMethods:
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_request:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_request:
                 mock_request.return_value = mock_response
 
                 workflow = await client.get_workflow(1)
@@ -147,7 +153,9 @@ class TestWorkflowMethods:
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_request:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_request:
                 mock_request.return_value = mock_response
 
                 workflows = await client.list_workflows()
@@ -159,7 +167,9 @@ class TestWorkflowMethods:
                 assert workflows[1].id == 2
 
                 # Verify the API was called without team_id parameter
-                mock_request.assert_called_once_with("GET", "/api/v1/workflows/workflows")
+                mock_request.assert_called_once_with(
+                    "GET", "/api/v1/workflows/workflows"
+                )
 
     @pytest.mark.asyncio
     async def test_execute_workflow_success(self):
@@ -171,12 +181,12 @@ class TestWorkflowMethods:
             "success": True,
         }
 
-        input_config = InputConfig(
-            file_urls=["https://example.com/test.pdf"]
-        )
+        input_config = InputConfig(file_urls=["https://example.com/test.pdf"])
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_request:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_request:
                 mock_request.return_value = mock_execute_response
 
                 execution = await client.execute_workflow(
@@ -201,7 +211,7 @@ class TestWorkflowMethods:
             "steps": {
                 "step1": {
                     "status": "COMPLETED",
-                    "output_url": "https://example.com/output.json"
+                    "output_url": "https://example.com/output.json",
                 }
             },
             "created": "2024-01-01T00:00:00Z",
@@ -209,7 +219,9 @@ class TestWorkflowMethods:
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_request:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_request:
                 mock_request.return_value = mock_response
 
                 execution = await client.get_execution_status(1)
@@ -240,7 +252,7 @@ class TestWorkflowMethods:
             "steps": {
                 "step1": {
                     "status": "COMPLETED",
-                    "output_url": "https://example.com/output.json"
+                    "output_url": "https://example.com/output.json",
                 }
             },
             "created": "2024-01-01T00:00:00Z",
@@ -248,7 +260,9 @@ class TestWorkflowMethods:
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_request:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_request:
                 # Two status checks: processing, then complete
                 mock_request.side_effect = [
                     mock_status_processing,
@@ -272,19 +286,16 @@ class TestWorkflowMethods:
             "execution_id": 1,
             "workflow_id": 1,
             "status": "FAILED",
-            "steps": {
-                "step1": {
-                    "status": "FAILED",
-                    "error": "Step processing failed"
-                }
-            },
+            "steps": {"step1": {"status": "FAILED", "error": "Step processing failed"}},
             "error": "Processing error occurred",
             "created": "2024-01-01T00:00:00Z",
             "updated": "2024-01-01T00:01:00Z",
         }
 
         async with AsyncDatalabClient(api_key="test-key") as client:
-            with patch.object(client, "_make_request", new_callable=AsyncMock) as mock_request:
+            with patch.object(
+                client, "_make_request", new_callable=AsyncMock
+            ) as mock_request:
                 mock_request.return_value = mock_status_failed
 
                 execution = await client.get_execution_status(execution_id=1)
@@ -343,9 +354,7 @@ class TestSyncWorkflowClient:
             "success": True,
         }
 
-        input_config = InputConfig(
-            file_urls=["https://example.com/test.pdf"]
-        )
+        input_config = InputConfig(file_urls=["https://example.com/test.pdf"])
 
         client = DatalabClient(api_key="test-key")
         with patch.object(
@@ -353,7 +362,9 @@ class TestSyncWorkflowClient:
         ) as mock_request:
             mock_request.return_value = mock_execute_response
 
-            execution = client.execute_workflow(workflow_id=1, input_config=input_config)
+            execution = client.execute_workflow(
+                workflow_id=1, input_config=input_config
+            )
 
             assert isinstance(execution, WorkflowExecution)
             assert execution.id == 1
@@ -403,18 +414,13 @@ class TestWorkflowModels:
     def test_input_config_to_dict(self):
         """Test InputConfig to_dict method"""
         # Test file_urls format
-        config1 = InputConfig(
-            file_urls=["https://example.com/test.pdf"]
-        )
+        config1 = InputConfig(file_urls=["https://example.com/test.pdf"])
         result1 = config1.to_dict()
         assert result1["file_urls"] == ["https://example.com/test.pdf"]
 
         # Test bucket format
         config2 = InputConfig(
-            bucket="my-bucket",
-            prefix="path/",
-            pattern="*.pdf",
-            storage_type="s3"
+            bucket="my-bucket", prefix="path/", pattern="*.pdf", storage_type="s3"
         )
         result2 = config2.to_dict()
         assert result2["bucket"] == "my-bucket"
@@ -429,7 +435,10 @@ class TestWorkflowModels:
             workflow_id=1,
             status="complete",
             success=True,
-            input_config={"type": "single_file", "file_url": "https://example.com/test.pdf"},
+            input_config={
+                "type": "single_file",
+                "file_url": "https://example.com/test.pdf",
+            },
             steps={"output": "test result"},
         )
 

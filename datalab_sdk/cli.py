@@ -20,6 +20,9 @@ from datalab_sdk.models import (
     SegmentOptions,
     CustomPipelineOptions,
     TrackChangesOptions,
+    FormFillingOptions,
+    FormFieldsOptions,
+    AgentOptions,
     ProcessingOptions,
     WorkflowStep,
     InputConfig,
@@ -27,6 +30,50 @@ from datalab_sdk.models import (
 from datalab_sdk.exceptions import DatalabError
 from datalab_sdk.settings import settings
 import json
+
+
+OUTPUT_FORMATS = ("markdown", "html", "json", "chunks")
+
+
+def _validate_output_formats(allowed):
+    """Make a click callback that checks a comma-separated format list"""
+
+    def callback(ctx, param, value):
+        if value is None:
+            return value
+        formats = [f.strip() for f in value.split(",") if f.strip()]
+        invalid = [f for f in formats if f not in allowed]
+        if invalid or not formats:
+            raise click.BadParameter(
+                f"Each format must be one of: {', '.join(allowed)}. "
+                "Separate formats with commas."
+            )
+        return ",".join(formats)
+
+    return callback
+
+
+def _load_json_option(value: Optional[str], name: str):
+    """Load a JSON option from a file path or from an inline JSON string"""
+    if value is None:
+        return None
+    path = Path(value)
+    try:
+        if path.exists() and path.is_file():
+            return json.loads(path.read_text(encoding="utf-8"))
+        return json.loads(value)
+    except json.JSONDecodeError as e:
+        raise click.BadParameter(f"{name} is not valid JSON: {e}")
+
+
+def _schema_option_text(value: Optional[str]) -> Optional[str]:
+    """Return a schema as a JSON string. The value is a path or inline JSON."""
+    if value is None:
+        return None
+    path = Path(value)
+    if path.exists() and path.is_file():
+        return path.read_text(encoding="utf-8")
+    return value
 
 
 # Common CLI options
@@ -51,9 +98,9 @@ def common_options(func):
     func = click.option(
         "--page_range", help='Page range to process (e.g., "0-2" or "0,1,2")'
     )(func)
-    func = click.option("--skip_cache", help="Skip the cache when running inference")(
-        func
-    )
+    func = click.option(
+        "--skip_cache", is_flag=True, help="Skip the cache when running inference"
+    )(func)
     func = click.option(
         "--max_polls", default=300, type=int, help="Maximum number of polling attempts"
     )(func)
@@ -63,14 +110,20 @@ def common_options(func):
     return func
 
 
+def webhook_option(func):
+    return click.option(
+        "--webhook_url", help="Webhook URL that the API calls when a request is done"
+    )(func)
+
+
 def marker_options(func):
     """Options specific to convert command"""
     func = click.option(
         "--format",
         "output_format",
         default="markdown",
-        type=click.Choice(["markdown", "html", "json", "chunks"]),
-        help="Output format",
+        callback=_validate_output_formats(OUTPUT_FORMATS),
+        help="Output format: markdown, html, json or chunks. Separate several with commas.",
     )(func)
     func = click.option(
         "--paginate", is_flag=True, help="Add page delimiters to output"
@@ -88,10 +141,46 @@ def marker_options(func):
     )(func)
     func = click.option(
         "--mode",
-        type=click.Choice(["fast", "balanced", "accurate"]),
+        type=click.Choice(["lite", "fast", "balanced", "accurate"]),
         default="fast",
-        help="Processing mode",
+        help="Processing mode (the SDK default is fast)",
     )(func)
+    return func
+
+
+def convert_extra_options(func):
+    """Convert options that the API added after the first CLI release"""
+    flags = [
+        (
+            "--merge_cross_page",
+            "Merge tables, paragraphs and lists split across pages (billed as a surcharge)",
+        ),
+        ("--word_bboxes", "Predict per-word bounding boxes (HTML output)"),
+        ("--disable_html_prettify", "Return compact HTML"),
+        ("--exact_transcription", "Transcribe text exactly as printed"),
+        (
+            "--fence_synthetic_captions",
+            "Wrap synthetic image captions in comment markers",
+        ),
+        ("--token_efficient_markdown", "Use compact markdown for LLMs"),
+        ("--include_markdown_in_chunks", "Add markdown to each chunk or JSON block"),
+        ("--keep_spreadsheet_formatting", "Keep spreadsheet formatting"),
+        ("--keep_pageheader_in_output", "Keep page headers in markdown and HTML"),
+        ("--keep_pagefooter_in_output", "Keep page footers in markdown and HTML"),
+        ("--save_checkpoint", "Save a checkpoint for later extract or segment calls"),
+    ]
+    for name, help_text in flags:
+        func = click.option(name, is_flag=True, help=help_text)(func)
+    func = click.option(
+        "--extras",
+        help="Comma-separated extras, e.g. track_changes,chart_understanding,"
+        "table_cell_bboxes,list_item_bboxes,extract_links,extract_bookmarks,"
+        "infographic,new_block_types",
+    )(func)
+    func = click.option(
+        "--additional_config", help="Additional config as JSON or a path to a JSON file"
+    )(func)
+    func = webhook_option(func)
     return func
 
 
@@ -267,7 +356,7 @@ def process_documents(
     disable_image_extraction: bool = False,
     disable_image_captions: bool = False,
     add_block_ids: bool = False,
-    mode: str = "fast",
+    mode: Optional[str] = "fast",
     # Extract-specific
     page_schema: Optional[str] = None,
     checkpoint_id: Optional[str] = None,
@@ -275,7 +364,6 @@ def process_documents(
     segmentation_schema: Optional[str] = None,
     # Custom pipeline-specific
     pipeline_id: Optional[str] = None,
-    run_eval: bool = False,
     # Options object override
     options_override: Optional[ProcessingOptions] = None,
 ):
@@ -320,32 +408,33 @@ def process_documents(
                 page_range=page_range,
                 skip_cache=skip_cache,
                 add_block_ids=add_block_ids,
-                mode=mode,
+                mode=mode or "fast",
             )
         elif method == "extract":
             options = ExtractOptions(
                 page_schema=page_schema or "",
                 checkpoint_id=checkpoint_id,
-                mode=mode,
                 output_format=output_format or "markdown",
                 max_pages=max_pages,
                 page_range=page_range,
                 skip_cache=skip_cache,
             )
+            if mode is not None:
+                options.mode = mode
         elif method == "segment":
             options = SegmentOptions(
                 segmentation_schema=segmentation_schema or "",
                 checkpoint_id=checkpoint_id,
-                mode=mode,
+                mode=mode or "fast",
                 max_pages=max_pages,
                 page_range=page_range,
                 skip_cache=skip_cache,
             )
-        elif method == "run_custom_pipeline":
+        elif method in ("run_custom_pipeline", "_run_custom_processor"):
+            method = "_run_custom_processor"
             options = CustomPipelineOptions(
                 pipeline_id=pipeline_id or "",
-                run_eval=run_eval,
-                mode=mode,
+                mode=mode or "fast",
                 output_format=output_format or "markdown",
                 max_pages=max_pages,
                 page_range=page_range,
@@ -385,8 +474,11 @@ def process_documents(
             "convert": "Conversion",
             "extract": "Extraction",
             "segment": "Segmentation",
-            "run_custom_pipeline": "Custom Pipeline",
+            "_run_custom_processor": "Custom Pipeline",
             "track_changes": "Track Changes",
+            "fill": "Form Filling",
+            "form_fields": "Form Fields",
+            "run_agent": "Agent (Beta)",
             "ocr": "OCR",
         }
         operation = operation_names.get(method, method.title())
@@ -407,6 +499,7 @@ def cli():
 @click.argument("path", type=click.Path(exists=True))
 @common_options
 @marker_options
+@convert_extra_options
 def convert(
     path: str,
     api_key: str,
@@ -425,8 +518,47 @@ def convert(
     disable_image_captions: bool,
     add_block_ids: bool,
     mode: str,
+    merge_cross_page: bool,
+    word_bboxes: bool,
+    disable_html_prettify: bool,
+    exact_transcription: bool,
+    fence_synthetic_captions: bool,
+    token_efficient_markdown: bool,
+    include_markdown_in_chunks: bool,
+    keep_spreadsheet_formatting: bool,
+    keep_pageheader_in_output: bool,
+    keep_pagefooter_in_output: bool,
+    save_checkpoint: bool,
+    extras: Optional[str],
+    additional_config: Optional[str],
+    webhook_url: Optional[str],
 ):
-    """Convert documents to markdown, HTML, or JSON"""
+    """Convert documents to markdown, HTML, JSON, or chunks"""
+    options = ConvertOptions(
+        output_format=output_format or "markdown",
+        max_pages=max_pages,
+        page_range=page_range,
+        skip_cache=skip_cache,
+        paginate=paginate,
+        disable_image_extraction=disable_image_extraction,
+        disable_image_captions=disable_image_captions,
+        add_block_ids=add_block_ids,
+        mode=mode,
+        merge_cross_page=merge_cross_page,
+        word_bboxes=word_bboxes,
+        disable_html_prettify=disable_html_prettify,
+        exact_transcription=exact_transcription,
+        fence_synthetic_captions=fence_synthetic_captions,
+        token_efficient_markdown=token_efficient_markdown,
+        include_markdown_in_chunks=include_markdown_in_chunks,
+        keep_spreadsheet_formatting=keep_spreadsheet_formatting,
+        keep_pageheader_in_output=keep_pageheader_in_output,
+        keep_pagefooter_in_output=keep_pagefooter_in_output,
+        save_checkpoint=save_checkpoint,
+        extras=extras,
+        additional_config=_load_json_option(additional_config, "--additional_config"),
+        webhook_url=webhook_url,
+    )
     process_documents(
         path=path,
         method="convert",
@@ -440,28 +572,59 @@ def convert(
         skip_cache=skip_cache,
         max_polls=max_polls,
         poll_interval=poll_interval,
-        output_format=output_format,
-        paginate=paginate,
-        disable_image_extraction=disable_image_extraction,
-        disable_image_captions=disable_image_captions,
-        add_block_ids=add_block_ids,
-        mode=mode,
+        options_override=options,
     )
 
 
 @click.command()
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--page_schema", required=True, help="JSON schema for structured extraction (must contain 'properties' key)")
-@click.option("--checkpoint_id", help="Checkpoint ID from a previous convert (skips re-parsing)")
-@click.option("--format", "output_format", default="markdown", type=click.Choice(["markdown", "html", "json", "chunks"]), help="Output format")
-@click.option("--mode", type=click.Choice(["fast", "balanced", "accurate"]), default="fast", help="Processing mode")
+@click.option(
+    "--page_schema",
+    help="JSON schema for extraction (must contain 'properties'), inline or a path to a JSON file. "
+    "Give --page_schema or --schema_id.",
+)
+@click.option("--schema_id", help="ID of a saved extraction schema (sch_XXXXX)")
+@click.option(
+    "--schema_version", type=int, help="Version of the saved schema (with --schema_id)"
+)
+@click.option(
+    "--checkpoint_id", help="Checkpoint ID from a previous convert (skips re-parsing)"
+)
+@click.option(
+    "--format",
+    "output_format",
+    default="markdown",
+    callback=_validate_output_formats(OUTPUT_FORMATS),
+    help="Output format of the parsed text: markdown, html, json or chunks",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["fast", "balanced", "accurate"]),
+    default=None,
+    help="Parse mode. When omitted, the API picks the mode that matches --extraction_mode.",
+)
+@click.option(
+    "--extraction_mode",
+    type=click.Choice(["turbo", "fast", "balanced", "accurate"]),
+    default=None,
+    help="Extraction mode (the API default is balanced)",
+)
+@click.option(
+    "--save_checkpoint", is_flag=True, help="Save a checkpoint for later calls"
+)
+@webhook_option
 @common_options
 def extract(
     path: str,
-    page_schema: str,
+    page_schema: Optional[str],
+    schema_id: Optional[str],
+    schema_version: Optional[int],
     checkpoint_id: Optional[str],
     output_format: str,
-    mode: str,
+    mode: Optional[str],
+    extraction_mode: Optional[str],
+    save_checkpoint: bool,
+    webhook_url: Optional[str],
     api_key: str,
     output_dir: str,
     max_pages: Optional[int],
@@ -474,6 +637,23 @@ def extract(
     poll_interval: int,
 ):
     """Extract structured data from documents using a JSON schema"""
+    if bool(page_schema) == bool(schema_id):
+        raise click.UsageError("Give exactly one of --page_schema or --schema_id.")
+    options = ExtractOptions(
+        page_schema=_schema_option_text(page_schema) or "",
+        schema_id=schema_id,
+        schema_version=schema_version,
+        checkpoint_id=checkpoint_id,
+        output_format=output_format or "markdown",
+        extraction_mode=extraction_mode,
+        save_checkpoint=save_checkpoint,
+        webhook_url=webhook_url,
+        max_pages=max_pages,
+        page_range=page_range,
+        skip_cache=skip_cache,
+    )
+    if mode is not None:
+        options.mode = mode
     process_documents(
         path=path,
         method="extract",
@@ -487,24 +667,38 @@ def extract(
         skip_cache=skip_cache,
         max_polls=max_polls,
         poll_interval=poll_interval,
-        output_format=output_format,
-        mode=mode,
-        page_schema=page_schema,
-        checkpoint_id=checkpoint_id,
+        options_override=options,
     )
 
 
 @click.command()
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--segmentation_schema", required=True, help="JSON schema with segment names and descriptions")
-@click.option("--checkpoint_id", help="Checkpoint ID from a previous convert (skips re-parsing)")
-@click.option("--mode", type=click.Choice(["fast", "balanced", "accurate"]), default="fast", help="Processing mode")
+@click.option(
+    "--segmentation_schema",
+    required=True,
+    help="Segmentation schema as JSON, inline or a path to a JSON file",
+)
+@click.option(
+    "--checkpoint_id", help="Checkpoint ID from a previous convert (skips re-parsing)"
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["fast", "balanced", "accurate"]),
+    default="fast",
+    help="Processing mode",
+)
+@click.option(
+    "--save_checkpoint", is_flag=True, help="Save a checkpoint for later calls"
+)
+@webhook_option
 @common_options
 def segment(
     path: str,
     segmentation_schema: str,
     checkpoint_id: Optional[str],
     mode: str,
+    save_checkpoint: bool,
+    webhook_url: Optional[str],
     api_key: str,
     output_dir: str,
     max_pages: Optional[int],
@@ -517,6 +711,16 @@ def segment(
     poll_interval: int,
 ):
     """Segment documents into sections using a schema"""
+    options = SegmentOptions(
+        segmentation_schema=_schema_option_text(segmentation_schema) or "",
+        checkpoint_id=checkpoint_id,
+        mode=mode,
+        save_checkpoint=save_checkpoint,
+        webhook_url=webhook_url,
+        max_pages=max_pages,
+        page_range=page_range,
+        skip_cache=skip_cache,
+    )
     process_documents(
         path=path,
         method="segment",
@@ -530,23 +734,34 @@ def segment(
         skip_cache=skip_cache,
         max_polls=max_polls,
         poll_interval=poll_interval,
-        mode=mode,
-        segmentation_schema=segmentation_schema,
-        checkpoint_id=checkpoint_id,
+        options_override=options,
     )
 
 
 @click.command("custom-pipeline")
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--pipeline_id", required=True, help="Custom pipeline ID to execute (cp_XXXXX format)")
-@click.option("--run_eval", is_flag=True, help="Run evaluation rules for this pipeline")
-@click.option("--format", "output_format", default="markdown", type=click.Choice(["markdown", "html", "json", "chunks"]), help="Output format")
-@click.option("--mode", type=click.Choice(["fast", "balanced", "accurate"]), default="fast", help="Processing mode")
+@click.option(
+    "--pipeline_id",
+    required=True,
+    help="Custom pipeline ID to execute (cp_XXXXX format)",
+)
+@click.option(
+    "--format",
+    "output_format",
+    default="markdown",
+    callback=_validate_output_formats(OUTPUT_FORMATS),
+    help="Output format",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["fast", "balanced", "accurate"]),
+    default="fast",
+    help="Processing mode",
+)
 @common_options
 def custom_pipeline(
     path: str,
     pipeline_id: str,
-    run_eval: bool,
     output_format: str,
     mode: str,
     api_key: str,
@@ -560,10 +775,15 @@ def custom_pipeline(
     max_polls: int,
     poll_interval: int,
 ):
-    """Run a custom pipeline on documents"""
+    """[Deprecated] Run a custom pipeline. Use datalab agent --processor cp_XXXXX instead."""
+    click.echo(
+        "Warning: custom-pipeline is deprecated. "
+        "Use datalab agent --processor cp_XXXXX instead.",
+        err=True,
+    )
     process_documents(
         path=path,
-        method="run_custom_pipeline",
+        method="_run_custom_processor",
         api_key=api_key,
         output_dir=output_dir,
         max_pages=max_pages,
@@ -577,19 +797,26 @@ def custom_pipeline(
         output_format=output_format,
         mode=mode,
         pipeline_id=pipeline_id,
-        run_eval=run_eval,
     )
 
 
 @click.command("track-changes")
 @click.argument("path", type=click.Path(exists=True))
-@click.option("--format", "output_format", default="markdown,html,chunks", help="Comma-separated output formats (markdown, html, chunks)")
+@click.option(
+    "--format",
+    "output_format",
+    default="markdown,html,chunks",
+    callback=_validate_output_formats(("markdown", "html", "chunks")),
+    help="Comma-separated output formats (markdown, html, chunks)",
+)
 @click.option("--paginate", is_flag=True, help="Separate output by page")
+@webhook_option
 @common_options
 def track_changes(
     path: str,
     output_format: str,
     paginate: bool,
+    webhook_url: Optional[str],
     api_key: str,
     output_dir: str,
     max_pages: Optional[int],
@@ -601,7 +828,15 @@ def track_changes(
     max_polls: int,
     poll_interval: int,
 ):
-    """Extract tracked changes from DOCX documents"""
+    """Extract tracked changes and comments from DOCX or PDF documents"""
+    options = TrackChangesOptions(
+        output_format=output_format,
+        paginate=paginate,
+        webhook_url=webhook_url,
+        max_pages=max_pages,
+        page_range=page_range,
+        skip_cache=skip_cache,
+    )
     process_documents(
         path=path,
         method="track_changes",
@@ -615,14 +850,198 @@ def track_changes(
         skip_cache=skip_cache,
         max_polls=max_polls,
         poll_interval=poll_interval,
-        output_format=output_format,
-        paginate=paginate,
+        options_override=options,
+    )
+
+
+@click.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option(
+    "--field_data",
+    required=True,
+    help='Field data as JSON or a path to a JSON file: {"key": {"value": "...", "description": "..."}}',
+)
+@click.option("--context", help="Optional context to guide form filling")
+@common_options
+def fill(
+    path: str,
+    field_data: str,
+    context: Optional[str],
+    api_key: str,
+    output_dir: str,
+    max_pages: Optional[int],
+    extensions: Optional[str],
+    max_concurrent: int,
+    base_url: str,
+    page_range: Optional[str],
+    skip_cache: bool,
+    max_polls: int,
+    poll_interval: int,
+):
+    """Fill PDF or image forms with field data"""
+    if max_pages is not None:
+        raise click.UsageError("fill does not accept --max_pages. Use --page_range.")
+    options = FormFillingOptions(
+        field_data=_load_json_option(field_data, "--field_data"),
+        context=context,
+        page_range=page_range,
+        skip_cache=skip_cache,
+    )
+    process_documents(
+        path=path,
+        method="fill",
+        api_key=api_key,
+        output_dir=output_dir,
+        max_pages=None,
+        extensions=extensions,
+        max_concurrent=max_concurrent,
+        base_url=base_url,
+        page_range=page_range,
+        skip_cache=skip_cache,
+        max_polls=max_polls,
+        poll_interval=poll_interval,
+        options_override=options,
+    )
+
+
+@click.command("form-fields")
+@click.argument("path", type=click.Path(exists=True))
+@webhook_option
+@common_options
+def form_fields(
+    path: str,
+    webhook_url: Optional[str],
+    api_key: str,
+    output_dir: str,
+    max_pages: Optional[int],
+    extensions: Optional[str],
+    max_concurrent: int,
+    base_url: str,
+    page_range: Optional[str],
+    skip_cache: bool,
+    max_polls: int,
+    poll_interval: int,
+):
+    """Find the fillable fields in PDFs or images"""
+    options = FormFieldsOptions(
+        webhook_url=webhook_url,
+        max_pages=max_pages,
+        page_range=page_range,
+        skip_cache=skip_cache,
+    )
+    process_documents(
+        path=path,
+        method="form_fields",
+        api_key=api_key,
+        output_dir=output_dir,
+        max_pages=max_pages,
+        extensions=extensions,
+        max_concurrent=max_concurrent,
+        base_url=base_url,
+        page_range=page_range,
+        skip_cache=skip_cache,
+        max_polls=max_polls,
+        poll_interval=poll_interval,
+        options_override=options,
+    )
+
+
+@click.command()
+@click.argument("path", type=click.Path(exists=True))
+@click.option(
+    "--processor",
+    required=True,
+    help="Published agent processor, e.g. cp_abc123 or cp_abc123@2.0",
+)
+@click.option(
+    "--verification_effort",
+    type=click.Choice(["fast", "balanced", "accurate"]),
+    default=None,
+    help="Verification effort (the API default is fast)",
+)
+@click.option(
+    "--mode",
+    type=click.Choice(["fast", "balanced"]),
+    default=None,
+    help="Run mode (the API default is balanced)",
+)
+@click.option("--return_images", is_flag=True, help="Return images inline")
+@click.option("--skip_cache", is_flag=True, help="Skip the cache")
+@webhook_option
+@click.option("--api_key", required=False, help="Datalab API key")
+@click.option(
+    "--output_dir", "-o", required=False, type=click.Path(), help="Output directory"
+)
+@click.option(
+    "--extensions", help="Comma-separated list of file extensions (for directories)"
+)
+@click.option(
+    "--max_concurrent", default=5, type=int, help="Maximum concurrent requests"
+)
+@click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
+@click.option(
+    "--max_polls", default=300, type=int, help="Maximum number of polling attempts"
+)
+@click.option(
+    "--poll_interval", default=1, type=int, help="Polling interval in seconds"
+)
+def agent(
+    path: str,
+    processor: str,
+    verification_effort: Optional[str],
+    mode: Optional[str],
+    return_images: bool,
+    skip_cache: bool,
+    webhook_url: Optional[str],
+    api_key: Optional[str],
+    output_dir: Optional[str],
+    extensions: Optional[str],
+    max_concurrent: int,
+    base_url: str,
+    max_polls: int,
+    poll_interval: int,
+):
+    """[Beta] Run a published agent processor on documents"""
+    options = AgentOptions(
+        processor=processor,
+        verification_effort=verification_effort,
+        mode=mode,
+        return_images=return_images,
+        skip_cache=skip_cache,
+        webhook_url=webhook_url,
+    )
+    process_documents(
+        path=path,
+        method="run_agent",
+        api_key=api_key,
+        output_dir=output_dir,
+        max_pages=None,
+        extensions=extensions,
+        max_concurrent=max_concurrent,
+        base_url=base_url,
+        page_range=None,
+        skip_cache=skip_cache,
+        max_polls=max_polls,
+        poll_interval=poll_interval,
+        options_override=options,
     )
 
 
 @click.command("create-document")
-@click.option("--markdown", "markdown_input", required=True, help="Markdown content or path to markdown file")
-@click.option("--output", "-o", "output_path", required=True, type=click.Path(), help="Output file path for the DOCX")
+@click.option(
+    "--markdown",
+    "markdown_input",
+    required=True,
+    help="Markdown content or path to markdown file",
+)
+@click.option(
+    "--output",
+    "-o",
+    "output_path",
+    required=True,
+    type=click.Path(),
+    help="Output file path for the DOCX",
+)
 @click.option("--api_key", required=False, help="Datalab API key")
 @click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
 def create_document(
@@ -656,7 +1075,9 @@ def create_document(
         )
 
         if result.success:
-            click.echo(f"Document created successfully: {Path(output_path).with_suffix('.docx')}")
+            click.echo(
+                f"Document created successfully: {Path(output_path).with_suffix('.docx')}"
+            )
         else:
             click.echo(f"Document creation failed: {result.error}", err=True)
             sys.exit(1)
@@ -667,6 +1088,14 @@ def create_document(
 
 
 # Workflow commands
+def _echo_workflows_removed():
+    click.echo(
+        "Warning: the Datalab API removed the Workflows API, so workflow "
+        "commands fail. Use pipelines instead (see the SDK README).",
+        err=True,
+    )
+
+
 @click.command()
 @click.option("--name", required=True, help="Name of the workflow")
 @click.option("--team_id", required=True, type=int, help="Team ID for the workflow")
@@ -684,7 +1113,8 @@ def create_workflow(
     api_key: Optional[str],
     base_url: str,
 ):
-    """Create a new workflow"""
+    """[Deprecated: the API removed workflows] Create a new workflow"""
+    _echo_workflows_removed()
     try:
         if api_key is None:
             api_key = settings.DATALAB_API_KEY
@@ -716,9 +1146,7 @@ def create_workflow(
 
         # Create workflow
         client = DatalabClient(api_key=api_key, base_url=base_url)
-        workflow = client.create_workflow(
-            name=name, team_id=team_id, steps=workflow_steps
-        )
+        workflow = client.create_workflow(name=name, steps=workflow_steps)
 
         click.echo("Workflow created successfully!")
         click.echo(f"   ID: {workflow.id}")
@@ -739,7 +1167,8 @@ def create_workflow(
 @click.option("--api_key", required=False, help="Datalab API key")
 @click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
 def get_workflow(workflow_id: int, api_key: Optional[str], base_url: str):
-    """Get a workflow by ID"""
+    """[Deprecated: the API removed workflows] Get a workflow by ID"""
+    _echo_workflows_removed()
     try:
         if api_key is None:
             api_key = settings.DATALAB_API_KEY
@@ -776,7 +1205,8 @@ def get_workflow(workflow_id: int, api_key: Optional[str], base_url: str):
 @click.option("--api_key", required=False, help="Datalab API key")
 @click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
 def get_step_types(api_key: Optional[str], base_url: str):
-    """Get all available workflow step types"""
+    """[Deprecated: the API removed workflows] Get all available workflow step types"""
+    _echo_workflows_removed()
     try:
         if api_key is None:
             api_key = settings.DATALAB_API_KEY
@@ -818,7 +1248,8 @@ def get_step_types(api_key: Optional[str], base_url: str):
 @click.option("--api_key", required=False, help="Datalab API key")
 @click.option("--base_url", default=settings.DATALAB_HOST, help="API base URL")
 def list_workflows(api_key: Optional[str], base_url: str):
-    """List all workflows for your team"""
+    """[Deprecated: the API removed workflows] List all workflows for your team"""
+    _echo_workflows_removed()
     try:
         if api_key is None:
             api_key = settings.DATALAB_API_KEY
@@ -865,7 +1296,8 @@ def execute_workflow(
     api_key: Optional[str],
     base_url: str,
 ):
-    """Trigger a workflow execution"""
+    """[Deprecated: the API removed workflows] Trigger a workflow execution"""
+    _echo_workflows_removed()
     try:
         if api_key is None:
             api_key = settings.DATALAB_API_KEY
@@ -952,7 +1384,8 @@ def get_execution_status(
     api_key: Optional[str],
     base_url: str,
 ):
-    """Get the status of a workflow execution"""
+    """[Deprecated: the API removed workflows] Get the status of a workflow execution"""
+    _echo_workflows_removed()
     try:
         if api_key is None:
             api_key = settings.DATALAB_API_KEY
@@ -1156,6 +1589,9 @@ cli.add_command(extract)
 cli.add_command(segment)
 cli.add_command(custom_pipeline)
 cli.add_command(track_changes)
+cli.add_command(fill)
+cli.add_command(form_fields)
+cli.add_command(agent)
 cli.add_command(create_document)
 cli.add_command(create_workflow)
 cli.add_command(get_workflow)

@@ -27,7 +27,7 @@ def main():
     print(f"Found {len(workflows)} workflow(s):\n")
 
     for workflow in workflows:
-        print(f"━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+        print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
         print(f"ID:         {workflow.id}")
         print(f"Name:       {workflow.name}")
         print(f"Team ID:    {workflow.team_id}")

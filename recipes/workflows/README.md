@@ -1,5 +1,7 @@
 # Workflow Recipes & Examples
 
+> **Note:** The Datalab API no longer serves the Workflows API (`/api/v1/workflows`), so these recipes do not run. Use [pipelines](https://documentation.datalab.to/docs/welcome/sdk/pipelines) instead. We keep this directory for reference only.
+
 This directory contains example Workflow definitions and code samples to help you make the most of Datalab's [Workflow functionality](https://documentation.datalab.to/docs/recipes/workflows/workflow-concepts).
 
 The purpose is to give you an intuition around integrating Workflows into your own code, with realistic examples on Workflow definitions you might run into. For any requests, feedback, or questions, reach out to us anytime at support@datalab.to
