@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from datalab_sdk.exceptions import DatalabAPIError
+from datalab_sdk.settings import settings
 
 KEYS_PAGE = "https://www.datalab.to/app/keys"
 
@@ -63,6 +64,7 @@ def _post(url: str, payload: dict, headers: dict) -> tuple[int, dict]:
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "User-Agent": f"datalab-python-sdk/{settings.VERSION}",
             **headers,
         },
         method="POST",

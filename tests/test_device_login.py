@@ -21,6 +21,7 @@ class FakeServer:
             {"api_key": "key_123", "team_name": "Acme", "key_name": "Datalab CLI"},
         )
         self.polls = 0
+        self.request_headers = []
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -36,6 +37,7 @@ class FakeServer:
                 self.wfile.write(data)
 
             def do_POST(self):
+                outer.request_headers.append(dict(self.headers))
                 self.rfile.read(int(self.headers.get("Content-Length") or 0))
                 if self.path == "/api/auth/device/code":
                     host = f"http://127.0.0.1:{outer.port}"
@@ -141,3 +143,28 @@ def test_cli_login_saves_key(config_home):
     assert auth.load_saved_api_key() == "key_123"
     out = CliRunner().invoke(cli, ["logout"])
     assert out.exit_code == 0 and auth.load_saved_api_key() is None
+
+
+@pytest.mark.parametrize("custom_user_agent", [None, "custom-sdk-client/1.0"])
+def test_device_login_identifies_client_on_code_and_token_requests(custom_user_agent):
+    from datalab_sdk.settings import settings
+
+    server = FakeServer(pending_polls=0)
+    headers = {"X-Test-Client": "device-login"}
+    if custom_user_agent:
+        headers["User-Agent"] = custom_user_agent
+    try:
+        auth.device_login(
+            host=server.url,
+            open_browser=False,
+            extra_headers=headers,
+            sleep=lambda _: None,
+        )
+    finally:
+        server.close()
+    assert len(server.request_headers) == 2
+    for sent in server.request_headers:
+        assert sent["User-Agent"] == (
+            custom_user_agent or f"datalab-python-sdk/{settings.VERSION}"
+        )
+        assert sent["X-Test-Client"] == "device-login"

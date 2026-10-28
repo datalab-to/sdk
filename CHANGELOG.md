@@ -3,6 +3,14 @@
 The newest release is at the top. Each export to this repository uses the
 top section as its commit message.
 
+## 0.7.1
+
+Fixed:
+
+- Device login now identifies requests with the SDK user-agent, matching document
+  requests. This prevents the default Python user-agent from being rejected by
+  Cloudflare before the device-code API is reached.
+
 ## 0.7.0
 
 New:
