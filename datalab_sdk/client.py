@@ -202,8 +202,12 @@ class AsyncDatalabClient:
         if api_key is None:
             api_key = settings.DATALAB_API_KEY
         if api_key is None:
+            from datalab_sdk.auth import load_saved_api_key
+
+            api_key = load_saved_api_key()
+        if api_key is None:
             raise DatalabAPIError(
-                "You must pass in an api_key or set DATALAB_API_KEY. "
+                "No API key. Run `datalab login`, set DATALAB_API_KEY, or pass api_key. "
                 "Get a free API key at https://www.datalab.to/app/keys"
             )
 

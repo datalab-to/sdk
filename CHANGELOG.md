@@ -3,6 +3,17 @@
 The newest release is at the top. Each export to this repository uses the
 top section as its commit message.
 
+## 0.7.0
+
+New:
+
+- `datalab login`: sign in from a terminal or a coding agent with a device
+  code. Approve it in the browser, type the emailed 6-digit code, and the SDK
+  saves an API key to `~/.config/datalab/config.json` (mode 0600).
+  `datalab logout` deletes it.
+- The clients use the saved key when no `api_key` is passed and
+  `DATALAB_API_KEY` is not set.
+
 ## 0.6.0
 
 Breaking changes:

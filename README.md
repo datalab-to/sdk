@@ -20,6 +20,14 @@ pip install datalab-python-sdk
 export DATALAB_API_KEY="your_api_key_here"
 ```
 
+Or sign in from a terminal, which also works for coding agents:
+
+```bash
+datalab login
+```
+
+It shows a code and a link. Open the link, sign in or sign up, approve the code, and type the 6-digit code that we email you. The SDK saves the key to `~/.config/datalab/config.json`, readable only by your user, and uses it when `DATALAB_API_KEY` is not set. `datalab logout` deletes it.
+
 ### Basic Usage
 
 ```python

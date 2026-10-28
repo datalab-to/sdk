@@ -496,6 +496,55 @@ def cli():
 
 
 @click.command()
+@click.option(
+    "--host",
+    default=None,
+    help="API host (default: DATALAB_HOST or https://www.datalab.to)",
+)
+@click.option(
+    "--no-browser",
+    is_flag=True,
+    help="Print the sign-in URL instead of opening a browser",
+)
+def login(host: Optional[str], no_browser: bool):
+    """Sign in from this terminal and save an API key (device code)."""
+    from datalab_sdk.auth import device_login, save_api_key
+
+    host = (host or settings.DATALAB_HOST).rstrip("/")
+
+    def show(code: dict):
+        click.echo("To sign in, open this page and approve the code:")
+        click.echo(f"  {code['verification_uri_complete']}")
+        click.echo(f"  Code: {code['user_code']}")
+        click.echo("Then type the 6-digit code that we email you.")
+        click.echo("Waiting for approval...")
+
+    try:
+        result = device_login(host=host, open_browser=not no_browser, on_code=show)
+    except DatalabError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    path = save_api_key(result["api_key"], host, result.get("team_name"))
+    click.echo(f"Signed in to team {result.get('team_name')}. API key saved to {path}.")
+    click.echo(
+        "DATALAB_API_KEY in your environment still takes priority over the saved key."
+    )
+
+
+@click.command()
+def logout():
+    """Delete the API key that `datalab login` saved. The key itself stays valid until you revoke it."""
+    from datalab_sdk.auth import config_path, delete_saved_api_key
+
+    if delete_saved_api_key():
+        click.echo(
+            f"Removed {config_path()}. Revoke the key at https://www.datalab.to/app/keys if you no longer need it."
+        )
+    else:
+        click.echo("No saved API key.")
+
+
+@click.command()
 @click.argument("path", type=click.Path(exists=True))
 @common_options
 @marker_options
@@ -1584,6 +1633,8 @@ def _render_dag_simple(layers, children, step_map):
 
 
 # Add commands to CLI group
+cli.add_command(login)
+cli.add_command(logout)
 cli.add_command(convert)
 cli.add_command(extract)
 cli.add_command(segment)
