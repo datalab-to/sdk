@@ -339,6 +339,7 @@ class ConversionResult:
     segmentation_schema: Optional[str] = None
     # True when the run reused a checkpoint of the same file.
     checkpoint_reused: Optional[bool] = None
+    progress_percent: Optional[int] = None
 
     def save_output(
         self, output_path: Union[str, Path], save_images: bool = True
@@ -538,6 +539,7 @@ class OCRResult:
     versions: Optional[Union[Dict[str, Any], str]] = None
     cost_breakdown: Optional[Dict[str, Any]] = None
     request_id: Optional[str] = None
+    progress_percent: Optional[int] = None
 
     def get_text(self, page_num: Optional[int] = None) -> str:
         """Extract text from OCR results"""
@@ -603,6 +605,7 @@ class FormFillingResult:
     request_id: Optional[str] = None
     result_url: Optional[str] = None
     expires_in: Optional[int] = None
+    progress_percent: Optional[int] = None
 
     def save_output(self, output_path: Union[str, Path]) -> None:
         """Save the filled form to a file"""
@@ -660,6 +663,7 @@ class CreateDocumentResult:
     request_id: Optional[str] = None
     result_url: Optional[str] = None
     expires_in: Optional[int] = None
+    progress_percent: Optional[int] = None
 
     def save_output(self, output_path: Union[str, Path]) -> None:
         """Save the created document to a file"""
@@ -704,6 +708,7 @@ class AgentResult:
     request_id: Optional[str] = None
     result_url: Optional[str] = None
     expires_in: Optional[int] = None
+    progress_percent: Optional[int] = None
 
     def save_output(
         self, output_path: Union[str, Path], save_images: bool = True
@@ -761,6 +766,7 @@ class FormFieldsResult:
     request_id: Optional[str] = None
     result_url: Optional[str] = None
     expires_in: Optional[int] = None
+    progress_percent: Optional[int] = None
 
     def save_output(self, output_path: Union[str, Path]) -> None:
         """Save the detected fields to a JSON file"""
@@ -806,6 +812,7 @@ class FileResult:
     status: str
     output_path: Path
     error: Optional[str] = None
+    progress_percent: Optional[int] = None
 
 
 # --- Extraction Schema models ---
@@ -894,6 +901,7 @@ class PipelineExecutionStepResult:
     checkpoint_id: Optional[str] = None
     source_step_type: Optional[str] = None  # for eval steps: the step it scores
     checkpoint_reused: Optional[bool] = None
+    progress_percent: Optional[int] = None
 
 
 @dataclass
@@ -911,6 +919,7 @@ class PipelineExecution:
     config_snapshot: Optional[Dict[str, Any]] = None
     input_config: Optional[Dict[str, Any]] = None
     rate_breakdown: Optional[Dict[str, Any]] = None
+    progress_percent: Optional[int] = None
 
 
 # --- Custom Processor models ---

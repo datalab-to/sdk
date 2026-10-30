@@ -3,6 +3,7 @@ Datalab API client - async core with sync wrapper
 """
 
 import asyncio
+import inspect
 import json as jsonlib
 import mimetypes
 import os
@@ -20,7 +21,7 @@ from tenacity import (
     wait_exponential_jitter,
 )
 from pathlib import Path
-from typing import Union, Optional, Dict, Any
+from typing import Union, Optional, Dict, Any, Callable, Awaitable
 
 from datalab_sdk.exceptions import (
     DatalabAPIError,
@@ -64,6 +65,29 @@ from datalab_sdk.models import (
     CustomProcessorVersion,
 )
 from datalab_sdk.settings import settings
+
+
+ProgressCallback = Callable[[int], Optional[Awaitable[None]]]
+
+
+class _ProgressReporter:
+    """Deliver increasing, valid percentages within one polling operation."""
+
+    def __init__(self, callback: Optional[ProgressCallback]):
+        self.callback = callback
+        self.last = -1
+
+    async def report(self, percent: Any, *, complete: bool = False) -> None:
+        if complete:
+            percent = 100
+        if type(percent) is not int or not 0 <= percent <= (100 if complete else 99):
+            return
+        if self.callback is None or percent <= self.last:
+            return
+        self.last = percent
+        result = self.callback(percent)
+        if inspect.isawaitable(result):
+            await result
 
 
 # HTTP status codes that a POST submission can safely retry. The API sends
@@ -293,6 +317,7 @@ class AsyncDatalabClient:
         max_polls: int = 300,
         poll_interval: int = 1,
         stream_response_to: Optional[Path] = None,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[Dict[str, Any], FileResult]:
         """Poll for result completion"""
         full_url = (
@@ -301,20 +326,26 @@ class AsyncDatalabClient:
             else f"{self.base_url}/{check_url.lstrip('/')}"
         )
 
+        progress = _ProgressReporter(on_progress)
         for i in range(max_polls):
             if stream_response_to:
                 result = await self._poll_get_streaming(full_url, stream_response_to)
                 status, success, error = result.status, result.success, result.error
+                percent = result.progress_percent
             else:
                 data = await self._poll_get_with_retry(full_url)
                 status = data.get("status")
                 success = data.get("success", True)
                 error = data.get("error")
+                percent = data.get("progress_percent")
 
             if status == "complete":
-                if stream_response_to:
-                    return result
-                return await self._resolve_signed_result(data)
+                if not stream_response_to:
+                    result = await self._resolve_signed_result(data)
+                await progress.report(percent, complete=bool(success))
+                return result
+
+            await progress.report(percent)
 
             if not success and status != "processing":
                 raise DatalabAPIError(f"Processing failed: {error or 'Unknown error'}")
@@ -449,6 +480,7 @@ class AsyncDatalabClient:
                 success = None
                 error = None
                 result_url = None
+                progress_percent = None
 
                 tee_reader = _AsyncIterableReader(
                     self._tee_stream_to_file(resp.content, fd)
@@ -462,6 +494,8 @@ class AsyncDatalabClient:
                         error = value
                     elif prefix == "result_url" and event == "string":
                         result_url = value
+                    elif prefix == "progress_percent" and event == "number":
+                        progress_percent = value
             finally:
                 resp.release()
 
@@ -488,6 +522,7 @@ class AsyncDatalabClient:
                     status=status,
                     output_path=stream_response_to,
                     error=error,
+                    progress_percent=progress_percent,
                 )
             else:
                 return FileResult(
@@ -495,6 +530,7 @@ class AsyncDatalabClient:
                     status=status,
                     output_path=stream_response_to,
                     error=error,
+                    progress_percent=progress_percent,
                 )
         finally:
             if fd is not None:
@@ -597,6 +633,7 @@ class AsyncDatalabClient:
             extraction_mode=result_data.get("extraction_mode"),
             segmentation_schema=result_data.get("segmentation_schema"),
             checkpoint_reused=result_data.get("checkpoint_reused"),
+            progress_percent=result_data.get("progress_percent"),
         )
 
     async def _submit_and_poll(
@@ -607,6 +644,7 @@ class AsyncDatalabClient:
         poll_interval: int = 1,
         stream_response_to: Optional[Path] = None,
         json: Optional[Dict[str, Any]] = None,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[Dict[str, Any], FileResult]:
         """Submit a request and poll for the result.
 
@@ -624,6 +662,7 @@ class AsyncDatalabClient:
             initial_data["request_check_url"],
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
             stream_response_to=stream_response_to,
         )
         if isinstance(result, dict):
@@ -680,6 +719,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """
         Convert a document to markdown, HTML, JSON, or chunks
@@ -693,6 +733,7 @@ class AsyncDatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         resolved_stream_response_to = self._resolve_stream_path(
             save_output, stream_response_to
@@ -708,6 +749,7 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
             stream_response_to=resolved_stream_response_to,
         )
 
@@ -727,6 +769,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """
         Extract structured data from a document using a JSON schema or saved extraction schema
@@ -742,6 +785,7 @@ class AsyncDatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         resolved_stream_response_to = self._resolve_stream_path(
             save_output, stream_response_to
@@ -780,6 +824,7 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
             stream_response_to=resolved_stream_response_to,
         )
 
@@ -799,6 +844,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """
         Segment a document into sections using a schema
@@ -814,6 +860,7 @@ class AsyncDatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         resolved_stream_response_to = self._resolve_stream_path(
             save_output, stream_response_to
@@ -836,6 +883,7 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
             stream_response_to=resolved_stream_response_to,
         )
 
@@ -855,6 +903,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[AgentResult, FileResult]:
         """
         Run a published agent processor on a document (open beta; API may change).
@@ -871,6 +920,7 @@ class AsyncDatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         resolved_stream_response_to = self._resolve_stream_path(
             save_output, stream_response_to
@@ -886,6 +936,7 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
             stream_response_to=resolved_stream_response_to,
         )
 
@@ -919,6 +970,7 @@ class AsyncDatalabClient:
             request_id=result_data.get("request_id"),
             result_url=result_data.get("result_url"),
             expires_in=result_data.get("expires_in"),
+            progress_percent=result_data.get("progress_percent"),
         )
         self._save_if_requested(result, save_output)
         return result
@@ -932,6 +984,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """
         Execute a custom processor on a document
@@ -947,6 +1000,7 @@ class AsyncDatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         warnings.warn(
             "run_custom_processor() uses the deprecated /custom-processor endpoint. "
@@ -962,6 +1016,7 @@ class AsyncDatalabClient:
             stream_response_to=stream_response_to,
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
         )
 
     async def _run_custom_processor(
@@ -973,6 +1028,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         resolved_stream_response_to = self._resolve_stream_path(
             save_output, stream_response_to
@@ -988,6 +1044,7 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
             stream_response_to=resolved_stream_response_to,
         )
 
@@ -1007,6 +1064,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """Execute a custom processor on a document
 
@@ -1027,6 +1085,7 @@ class AsyncDatalabClient:
             stream_response_to=stream_response_to,
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
         )
 
     async def track_changes(
@@ -1038,6 +1097,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """
         Extract tracked changes and comments from DOCX or PDF documents
@@ -1050,6 +1110,7 @@ class AsyncDatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         resolved_stream_response_to = self._resolve_stream_path(
             save_output, stream_response_to
@@ -1065,6 +1126,7 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
             stream_response_to=resolved_stream_response_to,
         )
 
@@ -1085,6 +1147,7 @@ class AsyncDatalabClient:
         max_polls: int = 300,
         poll_interval: int = 1,
         processing_location: Optional[str] = None,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[CreateDocumentResult, FileResult]:
         """
         Create a DOCX document from markdown with track changes support
@@ -1102,6 +1165,7 @@ class AsyncDatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
             processing_location: Optional residency region, e.g. "eu"
         """
         resolved_stream_response_to = self._resolve_stream_path(
@@ -1122,6 +1186,7 @@ class AsyncDatalabClient:
             json=payload,
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
             stream_response_to=resolved_stream_response_to,
         )
 
@@ -1141,6 +1206,7 @@ class AsyncDatalabClient:
             request_id=result_data.get("request_id"),
             result_url=result_data.get("result_url"),
             expires_in=result_data.get("expires_in"),
+            progress_percent=result_data.get("progress_percent"),
         )
         self._save_if_requested(result, save_output, bool(result.output_base64))
         return result
@@ -1153,6 +1219,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[OCRResult, FileResult]:
         """Perform OCR on a document
 
@@ -1177,6 +1244,7 @@ class AsyncDatalabClient:
             data=self.get_form_params(file_path=file_path, options=options),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
             stream_response_to=resolved_stream_response_to,
         )
 
@@ -1192,6 +1260,7 @@ class AsyncDatalabClient:
             versions=result_data.get("versions"),
             cost_breakdown=result_data.get("cost_breakdown"),
             request_id=result_data.get("request_id"),
+            progress_percent=result_data.get("progress_percent"),
         )
         self._save_if_requested(result, save_output)
         return result
@@ -1205,6 +1274,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[FormFillingResult, FileResult]:
         """
         Fill PDF or image forms with provided field data
@@ -1217,6 +1287,7 @@ class AsyncDatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         resolved_stream_response_to = self._resolve_stream_path(
             save_output, stream_response_to
@@ -1232,6 +1303,7 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
             stream_response_to=resolved_stream_response_to,
         )
 
@@ -1254,6 +1326,7 @@ class AsyncDatalabClient:
             request_id=result_data.get("request_id"),
             result_url=result_data.get("result_url"),
             expires_in=result_data.get("expires_in"),
+            progress_percent=result_data.get("progress_percent"),
         )
         self._save_if_requested(result, save_output, bool(result.output_base64))
         return result
@@ -1267,6 +1340,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[FormFieldsResult, FileResult]:
         """
         Find the fillable fields on each page of a PDF or image
@@ -1282,6 +1356,7 @@ class AsyncDatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         resolved_stream_response_to = self._resolve_stream_path(
             save_output, stream_response_to
@@ -1297,6 +1372,7 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
+            on_progress=on_progress,
             stream_response_to=resolved_stream_response_to,
         )
 
@@ -1315,6 +1391,7 @@ class AsyncDatalabClient:
             request_id=result_data.get("request_id"),
             result_url=result_data.get("result_url"),
             expires_in=result_data.get("expires_in"),
+            progress_percent=result_data.get("progress_percent"),
         )
         self._save_if_requested(result, save_output)
         return result
@@ -2331,6 +2408,7 @@ class AsyncDatalabClient:
         poll_interval: int = 1,
         checkpoint_id: Optional[str] = None,
         processing_location: Optional[str] = None,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> PipelineExecution:
         """
         Execute a pipeline on a file
@@ -2346,6 +2424,7 @@ class AsyncDatalabClient:
             version: Pipeline version to execute (0=draft, omit=active)
             max_polls: Maximum polling attempts after submission (default: 1)
             poll_interval: Seconds between polls
+            on_progress: Optional callback for increasing estimated percentages (0-100).
             checkpoint_id: Checkpoint from the convert step of an earlier run.
                 The API skips re-parsing and runs only the later steps. You
                 must still send the file.
@@ -2371,6 +2450,10 @@ class AsyncDatalabClient:
             f"/api/v1/pipelines/{pipeline_id}/run", data=form_data
         )
         execution = self._build_pipeline_execution(response)
+        progress = _ProgressReporter(on_progress)
+        await progress.report(
+            execution.progress_percent, complete=execution.status == "completed"
+        )
 
         # Poll if requested
         if max_polls > 1 and execution.status not in (
@@ -2378,10 +2461,15 @@ class AsyncDatalabClient:
             "completed_with_errors",
             "failed",
         ):
+
+            async def forward_progress(percent: int) -> None:
+                await progress.report(percent, complete=percent == 100)
+
             return await self.get_pipeline_execution(
                 execution.execution_id,
                 max_polls=max_polls - 1,
                 poll_interval=poll_interval,
+                on_progress=forward_progress,
             )
         return execution
 
@@ -2390,6 +2478,7 @@ class AsyncDatalabClient:
         execution_id: str,
         max_polls: int = 1,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> PipelineExecution:
         """
         Get the status of a pipeline execution, optionally polling until completion
@@ -2398,12 +2487,17 @@ class AsyncDatalabClient:
             execution_id: Execution ID (pex_XXXXX)
             max_polls: Maximum polling attempts (default: 1 for single check)
             poll_interval: Seconds between polls
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
+        progress = _ProgressReporter(on_progress)
         for i in range(max_polls):
             response = await self._make_request(
                 "GET", f"/api/v1/pipelines/executions/{execution_id}"
             )
             execution = self._build_pipeline_execution(response)
+            await progress.report(
+                execution.progress_percent, complete=execution.status == "completed"
+            )
 
             if execution.status in ("completed", "completed_with_errors", "failed"):
                 return execution
@@ -2480,6 +2574,7 @@ class AsyncDatalabClient:
                 checkpoint_id=s.get("checkpoint_id"),
                 source_step_type=s.get("source_step_type"),
                 checkpoint_reused=s.get("checkpoint_reused"),
+                progress_percent=s.get("progress_percent"),
             )
             for s in data.get("steps", [])
         ]
@@ -2495,6 +2590,7 @@ class AsyncDatalabClient:
             config_snapshot=data.get("config_snapshot"),
             input_config=data.get("input_config"),
             rate_breakdown=data.get("rate_breakdown"),
+            progress_percent=data.get("progress_percent"),
         )
 
     # --- Custom Processor Management methods ---
@@ -2639,6 +2735,7 @@ class DatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """
         Convert a document to markdown, HTML, JSON, or chunks (sync version)
@@ -2651,6 +2748,7 @@ class DatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         return self._run_async(
             self._async_client.convert(
@@ -2661,6 +2759,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 
@@ -2673,6 +2772,7 @@ class DatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """
         Extract structured data using a JSON schema or saved extraction schema (sync version)
@@ -2685,6 +2785,7 @@ class DatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         return self._run_async(
             self._async_client.extract(
@@ -2695,6 +2796,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 
@@ -2707,6 +2809,7 @@ class DatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """
         Segment a document into sections using a schema (sync version)
@@ -2719,6 +2822,7 @@ class DatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         return self._run_async(
             self._async_client.segment(
@@ -2729,6 +2833,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 
@@ -2741,6 +2846,7 @@ class DatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """
         Execute a custom processor on a document (sync version)
@@ -2756,6 +2862,7 @@ class DatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         warnings.warn(
             "run_custom_processor() uses the deprecated /custom-processor endpoint. "
@@ -2772,6 +2879,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 
@@ -2784,6 +2892,7 @@ class DatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """Execute a custom processor on a document (sync version)
 
@@ -2805,6 +2914,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 
@@ -2817,6 +2927,7 @@ class DatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[ConversionResult, FileResult]:
         """
         Extract and display tracked changes from DOCX documents (sync version)
@@ -2829,6 +2940,7 @@ class DatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         return self._run_async(
             self._async_client.track_changes(
@@ -2839,6 +2951,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 
@@ -2852,6 +2965,7 @@ class DatalabClient:
         max_polls: int = 300,
         poll_interval: int = 1,
         processing_location: Optional[str] = None,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[CreateDocumentResult, FileResult]:
         """
         Create a DOCX document from markdown (sync version)
@@ -2864,6 +2978,7 @@ class DatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         return self._run_async(
             self._async_client.create_document(
@@ -2874,6 +2989,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
                 processing_location=processing_location,
             )
         )
@@ -2886,6 +3002,7 @@ class DatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[OCRResult, FileResult]:
         """Perform OCR on a document (sync version)
 
@@ -2900,6 +3017,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 
@@ -2912,6 +3030,7 @@ class DatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[FormFillingResult, FileResult]:
         """
         Fill PDF or image forms with provided field data (sync version)
@@ -2924,6 +3043,7 @@ class DatalabClient:
             stream_response_to: Optional path to stream raw JSON response to disk
             max_polls: Maximum number of polling attempts
             poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
         """
         return self._run_async(
             self._async_client.fill(
@@ -2934,6 +3054,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 
@@ -2946,6 +3067,7 @@ class DatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[AgentResult, FileResult]:
         """Run a published agent processor on a document (sync version)"""
         return self._run_async(
@@ -2957,6 +3079,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 
@@ -2969,6 +3092,7 @@ class DatalabClient:
         stream_response_to: Optional[Union[str, Path]] = None,
         max_polls: int = 300,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> Union[FormFieldsResult, FileResult]:
         """Find the fillable fields in a PDF or image (sync version)"""
         return self._run_async(
@@ -2980,6 +3104,7 @@ class DatalabClient:
                 stream_response_to=stream_response_to,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 
@@ -3376,6 +3501,7 @@ class DatalabClient:
         poll_interval: int = 1,
         checkpoint_id: Optional[str] = None,
         processing_location: Optional[str] = None,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> PipelineExecution:
         """Execute a pipeline on a file (sync version)"""
         return self._run_async(
@@ -3390,6 +3516,7 @@ class DatalabClient:
                 version=version,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
                 checkpoint_id=checkpoint_id,
                 processing_location=processing_location,
             )
@@ -3400,6 +3527,7 @@ class DatalabClient:
         execution_id: str,
         max_polls: int = 1,
         poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
     ) -> PipelineExecution:
         """Get pipeline execution status (sync version)"""
         return self._run_async(
@@ -3407,6 +3535,7 @@ class DatalabClient:
                 execution_id=execution_id,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 

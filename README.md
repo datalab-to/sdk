@@ -42,6 +42,32 @@ print(result.markdown)
 
 `AsyncDatalabClient` has the same methods as `DatalabClient`, as coroutines.
 
+## Progress callbacks
+
+With SDK 0.8.0 or later, pass `on_progress` to processing calls:
+
+```python
+result = client.convert(
+    "document.pdf",
+    on_progress=lambda percent: print(f"Processing: {percent}%"),
+)
+```
+
+The same argument works with `extract`, `segment`, `run_agent`, `track_changes`,
+`create_document`, `ocr`, `fill`, and `form_fields`, including `stream_response_to`.
+`run_pipeline` and `get_pipeline_execution` also support it; set `max_polls`
+above 1 to keep polling a pipeline. Result models expose `progress_percent`
+when the API supplies it.
+
+Callbacks receive increasing integer percentages from existing polls, skipping
+missing values and duplicates. Percentages may pause or jump and are not an ETA.
+A callback receives 100 only after successful completion and any signed-result
+download. Check the returned status and success to determine the outcome.
+`AsyncDatalabClient` also accepts async callbacks, which it awaits. Keep callbacks
+short: they run inline, and their exceptions propagate to your call. Callback
+errors stop local polling; they do not cancel the server request. No extra API
+requests are made, and polling intervals are unchanged.
+
 ## Conversion options
 
 ```python

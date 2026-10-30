@@ -3,6 +3,20 @@
 The newest release is at the top. Each export to this repository uses the
 top section as its commit message.
 
+## 0.8.0
+
+New:
+
+- Optional `on_progress` callbacks on synchronous and asynchronous document
+  processing helpers and pipeline polling. Callbacks receive increasing overall
+  percentages from existing polls; async callbacks are also supported. Missing
+  percentages are skipped, and 100 is reported only after successful completion
+  and any signed-result download. Callback exceptions propagate to the caller.
+- Optional `progress_percent` on processing results, streamed `FileResult`,
+  pipeline executions and execution steps. Percentages are estimates, may be
+  unavailable, and are not an ETA or a replacement for status and success.
+- Existing polling intervals and request counts are unchanged.
+
 ## 0.7.1
 
 Fixed:
