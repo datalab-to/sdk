@@ -104,6 +104,30 @@ print(result.extraction_schema_json, result.extraction_score_average)
 
 When you do not set the parse `mode`, the API picks the parse mode that matches `extraction_mode`.
 
+## Redaction
+
+**Open beta (SDK 0.9.0):** the redaction API may change.
+
+```python
+from datalab_sdk import RedactOptions
+
+result = client.redact(
+    "document.pdf",
+    options=RedactOptions(preset="personal_information"),
+)
+# A PDF can be returned even when verification fails. Review these first.
+print(result.verdict, result.failing_checks)
+if result.success and result.verdict == "PASS" and not result.withheld and result.output_base64:
+    result.save_output("redacted.pdf")
+```
+
+`get_redaction_presets()` returns the built-in preset IDs and specifications.
+Use `redaction_spec` to supply a custom spec. Redaction processes the whole
+PDF or image; page subsets are not supported. Completed requests are charged
+even if verification fails. `save_output` on `redact()` saves any available
+PDF, including one with failed verification. Redaction returns a typed result;
+`stream_response_to` is not supported for this helper.
+
 ## Other endpoints
 
 | Method | Endpoint |
@@ -114,7 +138,6 @@ When you do not set the parse `mode`, the API picks the parse mode that matches 
 | `form_fields()` | Find the fillable fields in a PDF or image |
 | `track_changes()` | Read tracked changes and comments from DOCX or PDF |
 | `create_document()` | Make a DOCX from markdown with track changes markup |
-| `generate_extraction_schemas()` | Suggest extraction schemas for a saved checkpoint |
 | `delete_result()` | Result deletion, by `result.request_id` |
 | `upload_files()`, `list_files()`, ... | File storage. Pass the returned `datalab://file-...` reference as `file_url` |
 | `create_extraction_schema()`, ... | Saved extraction schemas |
@@ -130,6 +153,10 @@ Published-agent execution is in open beta; the API may change. Processor design 
 - Processing methods poll until the result is ready. Set `max_polls` and `poll_interval` to change the limit (default: 300 polls, 1 second apart). Use `stream_response_to` to write a large result straight to disk.
 - The SDK retries a submission that gets HTTP 429 or 503, and polls that get 408, 429, 5xx or a connection error. It waits for the `Retry-After` header when the API sends one.
 - API errors raise `DatalabAPIError` (with `status_code` and `response_data`) or one of its subclasses: `DatalabAuthenticationError` (401, 403), `DatalabPaymentRequiredError` (402), `DatalabNotFoundError` (404), `DatalabRateLimitError` (429) and `DatalabServerError` (5xx). Invalid arguments raise `DatalabValidationError`, which is also a `ValueError`.
+
+With SDK 0.9.0, `upload_files(paths, max_concurrency=5)` streams
+files from disk and limits the number of active uploads. Results retain the
+input order. Use `AsyncDatalabClient` inside an existing async event loop.
 
 ## Workflows
 

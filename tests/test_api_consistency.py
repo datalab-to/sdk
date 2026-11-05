@@ -20,6 +20,7 @@ from datalab_sdk.models import (
     ExtractOptions,
     FormFieldsOptions,
     FormFillingOptions,
+    RedactOptions,
     OCROptions,
     SegmentOptions,
     TrackChangesOptions,
@@ -132,6 +133,14 @@ API_FIELDS = {
         "skip_cache",
         "processing_location",
     },
+    "/api/v1/redact": {
+        "file",
+        "file_url",
+        "preset",
+        "redaction_spec",
+        "skip_cache",
+        "processing_location",
+    },
     "/api/v1/agent": {
         "file",
         "file_url",
@@ -221,6 +230,7 @@ INFERENCE_CASES = [
     ("track_changes", "/api/v1/track-changes", TrackChangesOptions, {}, ()),
     ("form_fields", "/api/v1/form-fields", FormFieldsOptions, {}, ()),
     ("fill", "/api/v1/fill", FormFillingOptions, {}, ("max_pages",)),
+    ("redact", "/api/v1/redact", RedactOptions, {}, ()),
     ("run_agent", "/api/v1/agent", AgentOptions, {"processor": "cp_1"}, ()),
     ("ocr", "/api/v1/ocr", OCROptions, {}, ()),
 ]

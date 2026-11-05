@@ -232,6 +232,24 @@ class OCROptions(ProcessingOptions):
 
 
 @dataclass
+class RedactOptions:
+    """Options for whole-document redaction via /redact.
+
+    A custom spec replaces matching fields of the preset. Provide goal, rules,
+    and keep to override all three fields. Redaction does not support
+    page_range/max_pages.
+    """
+
+    preset: Optional[str] = "personal_information"
+    redaction_spec: Optional[Union[Dict[str, Any], str]] = None
+    skip_cache: bool = False
+    processing_location: Optional[str] = None
+
+    def to_form_data(self) -> Dict[str, Any]:
+        return ProcessingOptions.to_form_data(self)
+
+
+@dataclass
 class FormFillingOptions(ProcessingOptions):
     """Options for form filling via the /fill endpoint.
 
@@ -580,6 +598,44 @@ class OCRResult:
                 f,
                 indent=2,
             )
+
+
+@dataclass
+class RedactResult:
+    """Redacted PDF and verification report.
+
+    A completed request can return success=False and an available PDF.
+    Inspect verdict and failing_checks before using or sharing the PDF.
+    """
+
+    status: str
+    success: Optional[bool] = None
+    error: Optional[str] = None
+    verdict: Optional[str] = None
+    withheld: Optional[bool] = None
+    output_base64: Optional[str] = None
+    targets_removed_count: Optional[int] = None
+    targets_not_found_count: Optional[int] = None
+    failing_checks: Optional[List[Dict[str, Any]]] = None
+    boxes_applied: Optional[int] = None
+    pages_rewritten: Optional[List[int]] = None
+    text_layer_skipped: Optional[List[int]] = None
+    runtime: Optional[float] = None
+    page_count: Optional[int] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
+    versions: Optional[Union[Dict[str, Any], str]] = None
+    request_id: Optional[str] = None
+    result_url: Optional[str] = None
+    expires_in: Optional[int] = None
+    progress_percent: Optional[int] = None
+
+    def save_output(self, output_path: Union[str, Path]) -> None:
+        """Save the available PDF, including one that failed verification."""
+        if not self.output_base64:
+            raise ValueError("No output data available to save")
+        Path(output_path).with_suffix(".pdf").write_bytes(
+            base64.b64decode(self.output_base64)
+        )
 
 
 @dataclass

@@ -3,6 +3,26 @@
 The newest release is at the top. Each export to this repository uses the
 top section as its commit message.
 
+## 0.9.0
+
+New:
+
+- **Open beta:** `redact()` and `get_redaction_presets()` on both clients,
+  with `RedactOptions` and `RedactResult`. Results preserve the verification
+  verdict and failed checks, including when a completed run returns an
+  available PDF with failed verification. Regional signed results use the same
+  verified result contract. Use save_output to save the PDF; streaming redaction
+  results is not supported. The redaction API may change.
+- `upload_files(..., max_concurrency=5)` bounds active uploads, streams
+  files from disk, and reuses storage connections within a batch. Results
+  retain input order. Uploads respect the configured request timeout.
+
+Fixed:
+
+- Synchronous calls propagate an operation's `RuntimeError` without attempting
+  to rerun its coroutine. Calling the synchronous client inside an active event
+  loop now directs callers to `AsyncDatalabClient`.
+
 ## 0.8.0
 
 New:

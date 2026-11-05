@@ -43,6 +43,8 @@ from datalab_sdk.models import (
     CustomProcessorOptions,
     TrackChangesOptions,
     OCROptions,
+    RedactOptions,
+    RedactResult,
     FormFillingOptions,
     FormFillingResult,
     FormFieldsOptions,
@@ -318,6 +320,7 @@ class AsyncDatalabClient:
         poll_interval: int = 1,
         stream_response_to: Optional[Path] = None,
         on_progress: Optional[ProgressCallback] = None,
+        result_transform: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     ) -> Union[Dict[str, Any], FileResult]:
         """Poll for result completion"""
         full_url = (
@@ -342,6 +345,10 @@ class AsyncDatalabClient:
             if status == "complete":
                 if not stream_response_to:
                     result = await self._resolve_signed_result(data)
+                    if result_transform is not None:
+                        result = result_transform(result)
+                        success = result.get("success", False)
+                        percent = result.get("progress_percent")
                 await progress.report(percent, complete=bool(success))
                 return result
 
@@ -645,6 +652,7 @@ class AsyncDatalabClient:
         stream_response_to: Optional[Path] = None,
         json: Optional[Dict[str, Any]] = None,
         on_progress: Optional[ProgressCallback] = None,
+        result_transform: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     ) -> Union[Dict[str, Any], FileResult]:
         """Submit a request and poll for the result.
 
@@ -664,6 +672,11 @@ class AsyncDatalabClient:
             poll_interval=poll_interval,
             on_progress=on_progress,
             stream_response_to=stream_response_to,
+            **(
+                {"result_transform": result_transform}
+                if result_transform is not None
+                else {}
+            ),
         )
         if isinstance(result, dict):
             result = dict(result)
@@ -1265,6 +1278,104 @@ class AsyncDatalabClient:
         self._save_if_requested(result, save_output)
         return result
 
+    @staticmethod
+    def _normalize_redaction_result(data: Dict[str, Any]) -> Dict[str, Any]:
+        """Project inline and signed worker results onto the public redaction contract."""
+        result = {
+            key: value
+            for key, value in data.items()
+            if key in RedactResult.__dataclass_fields__
+        }
+        document = (
+            data.get("redacted_document")
+            if "redacted_document" in data
+            else data.get("output_base64")
+        )
+        result["output_base64"] = document or None
+        result["withheld"] = not bool(document)
+        if "redacted_document" in data:
+            checks = [
+                metric
+                for metric in (data.get("verifier_metrics") or [])
+                if isinstance(metric, dict)
+                and metric.get("status") != "pass"
+                and metric.get("severity", "blocking") != "advisory"
+            ]
+        else:
+            checks = data.get("failing_checks") or []
+        result["failing_checks"] = [
+            {"id": check["id"]}
+            for check in checks
+            if isinstance(check, dict) and isinstance(check.get("id"), str)
+        ]
+        for field in ("targets_removed", "targets_not_found"):
+            if result.get(f"{field}_count") is None and isinstance(
+                data.get(field), list
+            ):
+                result[f"{field}_count"] = len(data[field])
+        result["success"] = (
+            bool(document)
+            and data.get("verdict") == "PASS"
+            and not checks
+            and data.get("success") is not False
+        )
+        if result["success"]:
+            result["error"] = None
+        else:
+            result["error"] = (
+                "The PDF is available but did not pass all verification checks. Review failing_checks before using it."
+                if document
+                else "No redacted PDF is available. See failing_checks for verification results."
+            )
+            if result.get("progress_percent") == 100:
+                result["progress_percent"] = None
+        return result
+
+    async def redact(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[RedactOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
+    ) -> RedactResult:
+        """Redact a PDF or image. Inspect verdict/failing_checks before use.
+
+        A completed request can return success=False and an available PDF.
+        save_output saves that PDF too. Completed runs are charged even when
+        verification fails. Redaction reviews the whole document.
+        """
+        result_data = await self._submit_and_poll(
+            "/api/v1/redact",
+            data=self.get_form_params(
+                file_path=file_path,
+                file_url=file_url,
+                options=options if options is not None else RedactOptions(),
+            ),
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+            result_transform=self._normalize_redaction_result,
+            on_progress=on_progress,
+        )
+        result = RedactResult(
+            **{
+                key: value
+                for key, value in result_data.items()
+                if key in RedactResult.__dataclass_fields__
+            }
+        )
+        if save_output and result.output_base64:
+            output_path = Path(save_output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            result.save_output(output_path)
+        return result
+
+    async def get_redaction_presets(self) -> Dict[str, Any]:
+        """Get built-in redaction preset IDs, labels, and specifications."""
+        return await self._make_request("GET", "/api/v1/redact/presets")
+
     async def fill(
         self,
         file_path: Optional[Union[str, Path]] = None,
@@ -1824,6 +1935,7 @@ class AsyncDatalabClient:
         self,
         file_path: Union[str, Path],
         processing_location: Optional[str] = None,
+        upload_session: Optional[aiohttp.ClientSession] = None,
     ) -> UploadedFileMetadata:
         """
         Internal method to upload a single file to Datalab storage
@@ -1871,14 +1983,23 @@ class AsyncDatalabClient:
 
         # Step 2: Upload file to presigned URL
         try:
-            file_data = file_path.read_bytes()
-            async with aiohttp.ClientSession() as session:
-                async with session.put(
-                    upload_url,
-                    data=file_data,
-                    headers={"Content-Type": mime_type},
-                ) as upload_response:
-                    upload_response.raise_for_status()
+            if upload_session is None:
+                async with self._signed_url_session() as session:
+                    with file_path.open("rb") as file_data:
+                        async with session.put(
+                            upload_url,
+                            data=file_data,
+                            headers={"Content-Type": mime_type},
+                        ) as upload_response:
+                            upload_response.raise_for_status()
+            else:
+                with file_path.open("rb") as file_data:
+                    async with upload_session.put(
+                        upload_url,
+                        data=file_data,
+                        headers={"Content-Type": mime_type},
+                    ) as upload_response:
+                        upload_response.raise_for_status()
         except Exception as e:
             raise DatalabFileError(f"Failed to upload file to storage: {str(e)}")
 
@@ -1906,6 +2027,8 @@ class AsyncDatalabClient:
         self,
         file_paths: Union[str, Path, list[Union[str, Path]]],
         processing_location: Optional[str] = None,
+        *,
+        max_concurrency: int = 5,
     ) -> Union[UploadedFileMetadata, list[UploadedFileMetadata]]:
         """
         Upload one or more files to Datalab storage
@@ -1915,10 +2038,12 @@ class AsyncDatalabClient:
         2. Upload the file to the presigned URL
         3. Confirm the upload with the API
 
-        Multiple files are uploaded concurrently for better performance.
+        Files stream from disk, with at most max_concurrency uploads in flight.
+        Results preserve the input order.
 
         Args:
             file_paths: Single file path or list of file paths to upload
+            max_concurrency: Maximum concurrent uploads (default: 5, minimum: 1)
             processing_location: Optional residency region (e.g. "eu") for
                 the stored file. Use the returned reference as file_url in a
                 request with the same processing_location.
@@ -1934,16 +2059,36 @@ class AsyncDatalabClient:
             # Upload multiple files
             metadatas = client.upload_files(["doc1.pdf", "doc2.pdf"])
         """
-        # Handle single file path
+        if type(max_concurrency) is not int or max_concurrency < 1:
+            raise DatalabValidationError("max_concurrency must be a positive integer")
+
         if isinstance(file_paths, (str, Path)):
             return await self._upload_single_file(file_paths, processing_location)
+        if not file_paths:
+            return []
 
-        # Handle list of file paths
-        tasks = [
-            self._upload_single_file(file_path, processing_location)
-            for file_path in file_paths
-        ]
-        return await asyncio.gather(*tasks)
+        results = [None] * len(file_paths)
+        pending = iter(enumerate(file_paths))
+        async with self._signed_url_session() as session:
+
+            async def upload_worker():
+                for index, file_path in pending:
+                    results[index] = await self._upload_single_file(
+                        file_path, processing_location, upload_session=session
+                    )
+
+            workers = [
+                asyncio.create_task(upload_worker())
+                for _ in range(min(max_concurrency, len(file_paths)))
+            ]
+            try:
+                await asyncio.gather(*workers)
+            finally:
+                # Do not leave uploads running after a failure or cancellation.
+                for worker in workers:
+                    worker.cancel()
+                await asyncio.gather(*workers, return_exceptions=True)
+        return results
 
     async def list_files(
         self,
@@ -2716,10 +2861,19 @@ class DatalabClient:
         """Run async coroutine in sync context"""
         try:
             loop = asyncio.get_event_loop()
-            return loop.run_until_complete(self._async_wrapper(coro))
         except RuntimeError:
-            # No event loop exists, create and clean up
+            # Only a missing loop should select asyncio.run. RuntimeError from
+            # the operation itself must propagate without rerunning it.
             return asyncio.run(self._async_wrapper(coro))
+        if loop.is_running():
+            coro.close()
+            raise RuntimeError(
+                "DatalabClient cannot run inside an active event loop; "
+                "use AsyncDatalabClient instead."
+            )
+        if loop.is_closed():
+            return asyncio.run(self._async_wrapper(coro))
+        return loop.run_until_complete(self._async_wrapper(coro))
 
     async def _async_wrapper(self, coro):
         """Wrapper to ensure session management"""
@@ -3021,6 +3175,37 @@ class DatalabClient:
             )
         )
 
+    def redact(
+        self,
+        file_path: Optional[Union[str, Path]] = None,
+        file_url: Optional[str] = None,
+        options: Optional[RedactOptions] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
+    ) -> RedactResult:
+        """Redact a PDF or image. Inspect verdict/failing_checks before use.
+
+        A failed verification can still return a PDF and incur a charge.
+        save_output saves any available PDF, including failed verification.
+        """
+        return self._run_async(
+            self._async_client.redact(
+                file_path=file_path,
+                file_url=file_url,
+                options=options,
+                save_output=save_output,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+                on_progress=on_progress,
+            )
+        )
+
+    def get_redaction_presets(self) -> Dict[str, Any]:
+        """Get built-in redaction preset IDs, labels, and specifications."""
+        return self._run_async(self._async_client.get_redaction_presets())
+
     def fill(
         self,
         file_path: Optional[Union[str, Path]] = None,
@@ -3194,6 +3379,8 @@ class DatalabClient:
         self,
         file_paths: Union[str, Path, list[Union[str, Path]]],
         processing_location: Optional[str] = None,
+        *,
+        max_concurrency: int = 5,
     ) -> Union[UploadedFileMetadata, list[UploadedFileMetadata]]:
         """
         Upload one or more files to Datalab storage (sync version)
@@ -3203,10 +3390,12 @@ class DatalabClient:
         2. Upload the file to the presigned URL
         3. Confirm the upload with the API
 
-        Multiple files are uploaded concurrently for better performance.
+        Files stream from disk, with at most max_concurrency uploads in flight.
+        Results preserve the input order.
 
         Args:
             file_paths: Single file path or list of file paths to upload
+            max_concurrency: Maximum concurrent uploads (default: 5, minimum: 1)
             processing_location: Optional residency region, e.g. "eu"
 
         Returns:
@@ -3222,7 +3411,9 @@ class DatalabClient:
         """
         return self._run_async(
             self._async_client.upload_files(
-                file_paths=file_paths, processing_location=processing_location
+                file_paths=file_paths,
+                processing_location=processing_location,
+                max_concurrency=max_concurrency,
             )
         )
 
