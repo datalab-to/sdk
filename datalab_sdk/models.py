@@ -48,12 +48,15 @@ class ConvertOptions(ProcessingOptions):
     keep_spreadsheet_formatting: bool = False
     webhook_url: Optional[str] = None
     # Comma-separated list of extra features: 'track_changes', 'chart_understanding',
-    # 'table_row_bboxes', 'extract_links', 'infographic', 'new_block_types'
+    # 'table_cell_bboxes', 'list_item_bboxes', 'extract_links', 'infographic', 'new_block_types'
     extras: Optional[str] = None
     add_block_ids: bool = False  # add block IDs to HTML output
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
     token_efficient_markdown: bool = False  # optimize markdown for LLM token usage
     eval_rubric_id: Optional[int] = None  # run evaluation rubric after conversion
+    merge_cross_page: bool = False  # merge tables/paragraphs/lists split across pages (billed surcharge)
+    word_bboxes: bool = False  # predict per-word bounding boxes with confidence scores
+    processing_location: Optional[str] = None  # residency region override (e.g. "us", "eu")
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -83,10 +86,12 @@ class ExtractOptions(ProcessingOptions):
     schema_id: Optional[str] = None  # ID of a saved extraction schema (e.g. sch_k8Hx9mP2nQ4v). Mutually exclusive with page_schema.
     schema_version: Optional[int] = None  # Version of the schema. Only valid with schema_id.
     checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
-    mode: str = "fast"  # fast, balanced, accurate
+    mode: str = "fast"  # Parse mode: fast, balanced, accurate
+    extraction_mode: Optional[str] = None  # Extraction mode: "turbo", "fast", or "balanced". Defaults to "balanced".
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
+    processing_location: Optional[str] = None  # residency region override (e.g. "us", "eu")
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -94,6 +99,9 @@ class ExtractOptions(ProcessingOptions):
         # When using schema_id, suppress the empty default page_schema
         if self.schema_id and not self.page_schema:
             form_data.pop("page_schema", None)
+        # Only send extraction_mode if explicitly set
+        if self.extraction_mode is None:
+            form_data.pop("extraction_mode", None)
         return form_data
 
 
@@ -106,6 +114,7 @@ class SegmentOptions(ProcessingOptions):
     mode: str = "fast"  # fast, balanced, accurate
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
+    processing_location: Optional[str] = None  # residency region override (e.g. "us", "eu")
 
 
 @dataclass
@@ -123,6 +132,7 @@ class CustomProcessorOptions(ProcessingOptions):
     disable_image_extraction: bool = False  # Disable image extraction from the document
     disable_image_captions: bool = False  # Disable synthetic image captions/descriptions
     webhook_url: Optional[str] = None
+    processing_location: Optional[str] = None  # residency region override (e.g. "us", "eu")
 
     @property
     def processor_id(self) -> str:
@@ -145,6 +155,7 @@ class TrackChangesOptions(ProcessingOptions):
     output_format: str = "markdown,html,chunks"  # comma-separated
     paginate: bool = False
     webhook_url: Optional[str] = None
+    processing_location: Optional[str] = None  # residency region override (e.g. "us", "eu")
 
 
 @dataclass
@@ -159,6 +170,7 @@ class FormFillingOptions(ProcessingOptions):
     field_data: Dict[str, Dict[str, str]] = field(default_factory=dict)
     context: Optional[str] = None  # Optional context to guide form filling
     confidence_threshold: float = 0.5  # Minimum confidence for field matching (0.0-1.0)
+    processing_location: Optional[str] = None  # residency region override (e.g. "us", "eu")
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -189,7 +201,10 @@ class ConversionResult:
     json: Optional[Dict[str, Any]] = None
     chunks: Optional[Dict[str, Any]] = None
     extraction_schema_json: Optional[str] = None
+    extraction_score_average: Optional[float] = None  # average confidence score (1-5) across extracted fields
+    extraction_mode: Optional[str] = None  # extraction mode used: "turbo", "fast", or "balanced"
     segmentation_results: Optional[Dict[str, Any]] = None
+    segmentation_schema: Optional[str] = None  # segmentation schema echoed back from the request
     images: Optional[Dict[str, str]] = None
     metadata: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
