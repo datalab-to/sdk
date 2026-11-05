@@ -15,6 +15,7 @@ class ProcessingOptions:
     max_pages: Optional[int] = None
     skip_cache: bool = False
     page_range: Optional[str] = None
+    processing_location: Optional[str] = None
 
     def to_form_data(self) -> Dict[str, Any]:
         """Convert to form data format for API requests"""
@@ -51,8 +52,12 @@ class ConvertOptions(ProcessingOptions):
     # 'table_row_bboxes', 'extract_links', 'infographic', 'new_block_types'
     extras: Optional[str] = None
     add_block_ids: bool = False  # add block IDs to HTML output
+    disable_html_prettify: bool = False  # disable indented HTML output (compact, renders without extra whitespace)
+    exact_transcription: bool = False  # transcribe text character-for-character, preserving typos/formatting
     include_markdown_in_chunks: bool = False  # include markdown field in chunks/JSON output
+    merge_cross_page: bool = False  # merge tables/paragraphs/lists split across pages (billed as compute surcharge)
     token_efficient_markdown: bool = False  # optimize markdown for LLM token usage
+    word_bboxes: bool = False  # predict per-word bounding boxes with confidence scores
     eval_rubric_id: Optional[int] = None  # run evaluation rubric after conversion
 
     def to_form_data(self) -> Dict[str, Any]:
@@ -83,7 +88,8 @@ class ExtractOptions(ProcessingOptions):
     schema_id: Optional[str] = None  # ID of a saved extraction schema (e.g. sch_k8Hx9mP2nQ4v). Mutually exclusive with page_schema.
     schema_version: Optional[int] = None  # Version of the schema. Only valid with schema_id.
     checkpoint_id: Optional[str] = None  # From previous /convert with save_checkpoint=true
-    mode: str = "fast"  # fast, balanced, accurate
+    mode: str = "fast"  # Parse mode: fast, balanced, accurate
+    extraction_mode: Optional[str] = None  # Extraction mode: "turbo", "fast", "balanced", or "accurate". Defaults to "balanced".
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
@@ -94,6 +100,9 @@ class ExtractOptions(ProcessingOptions):
         # When using schema_id, suppress the empty default page_schema
         if self.schema_id and not self.page_schema:
             form_data.pop("page_schema", None)
+        # Only send extraction_mode if explicitly set
+        if self.extraction_mode is None:
+            form_data.pop("extraction_mode", None)
         return form_data
 
 
@@ -119,6 +128,8 @@ class CustomProcessorOptions(ProcessingOptions):
     output_format: str = "markdown"  # markdown, json, html, chunks
     paginate: bool = False  # Separate pages with horizontal rules containing page numbers
     add_block_ids: bool = False  # Add data-block-id attributes to HTML elements
+    disable_html_prettify: bool = False  # Disable indented HTML output (compact, renders without extra whitespace)
+    exact_transcription: bool = False  # Transcribe text character-for-character, preserving typos/formatting
     include_markdown_in_chunks: bool = False  # Include markdown field in chunks/JSON output
     disable_image_extraction: bool = False  # Disable image extraction from the document
     disable_image_captions: bool = False  # Disable synthetic image captions/descriptions
