@@ -417,7 +417,10 @@ class AsyncDatalabClient:
             json=result_data.get("json"),
             chunks=result_data.get("chunks"),
             extraction_schema_json=result_data.get("extraction_schema_json"),
+            extraction_score_average=result_data.get("extraction_score_average"),
+            extraction_mode=result_data.get("extraction_mode"),
             segmentation_results=result_data.get("segmentation_results"),
+            segmentation_schema=result_data.get("segmentation_schema"),
             images=result_data.get("images"),
             metadata=result_data.get("metadata"),
             error=result_data.get("error"),
@@ -1375,6 +1378,7 @@ class AsyncDatalabClient:
     async def _upload_single_file(
         self,
         file_path: Union[str, Path],
+        processing_location: Optional[str] = None,
     ) -> UploadedFileMetadata:
         """
         Internal method to upload a single file to Datalab storage
@@ -1386,6 +1390,7 @@ class AsyncDatalabClient:
 
         Args:
             file_path: Path to the local file to upload
+            processing_location: Data residency region (e.g. "us", "eu")
 
         Returns:
             UploadedFileMetadata object with file information including file_id and reference
@@ -1402,13 +1407,17 @@ class AsyncDatalabClient:
             mime_type = MIMETYPE_MAP.get(extension, "application/octet-stream")
 
         # Step 1: Request presigned upload URL
+        upload_request: Dict[str, Any] = {
+            "filename": file_path.name,
+            "content_type": mime_type,
+        }
+        if processing_location is not None:
+            upload_request["processing_location"] = processing_location
+
         response = await self._make_request(
             "POST",
             "/api/v1/files/upload",
-            json={
-                "filename": file_path.name,
-                "content_type": mime_type,
-            },
+            json=upload_request,
         )
 
         file_id = response["file_id"]
@@ -1451,6 +1460,7 @@ class AsyncDatalabClient:
     async def upload_files(
         self,
         file_paths: Union[str, Path, list[Union[str, Path]]],
+        processing_location: Optional[str] = None,
     ) -> Union[UploadedFileMetadata, list[UploadedFileMetadata]]:
         """
         Upload one or more files to Datalab storage
@@ -1464,6 +1474,7 @@ class AsyncDatalabClient:
 
         Args:
             file_paths: Single file path or list of file paths to upload
+            processing_location: Data residency region for the stored file (e.g. "us", "eu")
 
         Returns:
             If single file: UploadedFileMetadata object
@@ -1478,10 +1489,10 @@ class AsyncDatalabClient:
         """
         # Handle single file path
         if isinstance(file_paths, (str, Path)):
-            return await self._upload_single_file(file_paths)
+            return await self._upload_single_file(file_paths, processing_location=processing_location)
 
         # Handle list of file paths
-        tasks = [self._upload_single_file(file_path) for file_path in file_paths]
+        tasks = [self._upload_single_file(file_path, processing_location=processing_location) for file_path in file_paths]
         return await asyncio.gather(*tasks)
 
     async def list_files(
@@ -2546,6 +2557,7 @@ class DatalabClient:
     def upload_files(
         self,
         file_paths: Union[str, Path, list[Union[str, Path]]],
+        processing_location: Optional[str] = None,
     ) -> Union[UploadedFileMetadata, list[UploadedFileMetadata]]:
         """
         Upload one or more files to Datalab storage (sync version)
@@ -2559,6 +2571,7 @@ class DatalabClient:
 
         Args:
             file_paths: Single file path or list of file paths to upload
+            processing_location: Data residency region for the stored file (e.g. "us", "eu")
 
         Returns:
             If single file: UploadedFileMetadata object
@@ -2571,7 +2584,7 @@ class DatalabClient:
             # Upload multiple files
             metadatas = client.upload_files(["doc1.pdf", "doc2.pdf"])
         """
-        return self._run_async(self._async_client.upload_files(file_paths=file_paths))
+        return self._run_async(self._async_client.upload_files(file_paths=file_paths, processing_location=processing_location))
 
     def list_files(
         self,
