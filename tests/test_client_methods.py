@@ -795,6 +795,60 @@ class TestPollingLoop:
                     )
 
 
+class TestFastPolling:
+    @pytest.mark.asyncio
+    async def test_first_polls_are_fast(self):
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with (
+                patch.object(
+                    client, "_make_request", new_callable=AsyncMock
+                ) as mock_req,
+                patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            ):
+                mock_req.side_effect = [
+                    {"status": "processing", "success": True}
+                ] * 2 + [{"status": "complete", "success": True, "markdown": "x"}]
+                await client._poll_result(
+                    "https://api.example.com/check", max_polls=300, poll_interval=1
+                )
+                assert [c.args[0] for c in mock_sleep.await_args_list] == [0.3, 0.3]
+
+    @pytest.mark.asyncio
+    async def test_slow_interval_has_no_fast_phase(self):
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with (
+                patch.object(
+                    client, "_make_request", new_callable=AsyncMock
+                ) as mock_req,
+                patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            ):
+                mock_req.side_effect = [{"status": "processing", "success": True}] + [
+                    {"status": "complete", "success": True, "markdown": "x"}
+                ]
+                await client._poll_result(
+                    "https://api.example.com/check", max_polls=300, poll_interval=2
+                )
+                assert [c.args[0] for c in mock_sleep.await_args_list] == [2]
+
+    @pytest.mark.asyncio
+    async def test_budget_is_max_polls_times_interval(self):
+        async with AsyncDatalabClient(api_key="test-key") as client:
+            with (
+                patch.object(
+                    client, "_make_request", new_callable=AsyncMock
+                ) as mock_req,
+                patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+            ):
+                mock_req.return_value = {"status": "processing", "success": True}
+                with pytest.raises(DatalabTimeoutError):
+                    await client._poll_result(
+                        "https://api.example.com/check", max_polls=3, poll_interval=1
+                    )
+                assert sum(
+                    c.args[0] for c in mock_sleep.await_args_list
+                ) == pytest.approx(3)
+
+
 class TestExtractWithSchemaId:
     """Test extract with schema_id support"""
 

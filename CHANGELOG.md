@@ -3,6 +3,16 @@
 The newest release is at the top. Each export to this repository uses the
 top section as its commit message.
 
+## 0.9.1
+
+Changed:
+
+- Result polls check every 0.3 seconds for the first 8 seconds of a request,
+  then every `poll_interval`. Most single-page results are ready within a few
+  seconds, so they arrive sooner. The polling budget is unchanged: the waits
+  between polls add up to `max_polls * poll_interval` seconds. A
+  `poll_interval` above 1 second turns the fast phase off.
+
 ## 0.9.0
 
 New:

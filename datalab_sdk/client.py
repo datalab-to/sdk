@@ -97,6 +97,12 @@ class _ProgressReporter:
 _SUBMIT_RETRY_STATUSES = (429, 503)
 _BACKOFF = wait_exponential_jitter(initial=5, max=120)
 _MAX_RETRY_AFTER_SECONDS = 120.0
+# The first FAST_POLL_SECONDS of a result poll check every FAST_POLL_INTERVAL
+# seconds, then every poll_interval.
+FAST_POLL_INTERVAL = 0.3
+FAST_POLL_SECONDS = 8.0
+# Hard stop on poll requests, in case the time budget never runs out.
+_MAX_POLL_REQUESTS = 100_000
 
 
 def _wait_retry_after_or_backoff(retry_state) -> float:
@@ -330,7 +336,16 @@ class AsyncDatalabClient:
         )
 
         progress = _ProgressReporter(on_progress)
-        for i in range(max_polls):
+        # Most single-page results are ready within a few seconds, so the first
+        # FAST_POLL_SECONDS poll every FAST_POLL_INTERVAL. After that the loop
+        # polls every poll_interval. The budget is unchanged: the sleeps add up
+        # to max_polls * poll_interval seconds, as in the plain loop. A caller
+        # that asks for a poll_interval above 1 second gets no fast phase.
+        loop = asyncio.get_running_loop()
+        fast_until = loop.time() + FAST_POLL_SECONDS if 0 < poll_interval <= 1 else 0.0
+        budget = max_polls * poll_interval
+        slept = 0.0
+        for i in range(max_polls if poll_interval <= 0 else _MAX_POLL_REQUESTS):
             if stream_response_to:
                 result = await self._poll_get_streaming(full_url, stream_response_to)
                 status, success, error = result.status, result.success, result.error
@@ -357,7 +372,15 @@ class AsyncDatalabClient:
             if not success and status != "processing":
                 raise DatalabAPIError(f"Processing failed: {error or 'Unknown error'}")
 
-            await asyncio.sleep(poll_interval)
+            if poll_interval <= 0:
+                await asyncio.sleep(poll_interval)
+                continue
+            if slept >= budget:
+                break
+            delay = FAST_POLL_INTERVAL if loop.time() < fast_until else poll_interval
+            delay = min(delay, budget - slept)
+            await asyncio.sleep(delay)
+            slept += delay
 
         raise DatalabTimeoutError(
             f"Polling timed out after {max_polls * poll_interval} seconds"
