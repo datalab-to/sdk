@@ -107,7 +107,7 @@ When you do not set the parse `mode`, the API picks the parse mode that matches 
 **Open beta (SDK 0.9.2):** set `citation_granularity="phrase"` in
 `ExtractOptions` for matching words, offsets and match scores. A citation includes
 a box only when the phrase can be located; some citations keep only block/page
-references. Turbo returns no citations. See the
+references. Phrase citations cost nothing extra. Turbo returns no citations. See the
 [phrase citation guide](https://documentation.datalab.to/docs/recipes/structured-extraction/api-overview#phrase-level-citations).
 
 ## Redaction

@@ -811,8 +811,9 @@ class FormFieldsResult:
     """Result from fillable field detection (/form-fields endpoint)
 
     Each page is a dict with 'page', 'fields' and 'error' keys. Each field
-    has 'field_type', 'bbox' ([x0, y0, x1, y1] as page fractions) and
-    'label'.
+    has 'field_type', 'bbox' ([x0, y0, x1, y1] as page fractions), 'label'
+    (the printed label) and 'name' (a short descriptive name, empty when the
+    printed label is enough).
     """
 
     status: str
