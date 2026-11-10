@@ -104,6 +104,12 @@ print(result.extraction_schema_json, result.extraction_score_average)
 
 When you do not set the parse `mode`, the API picks the parse mode that matches `extraction_mode`.
 
+**Open beta (SDK 0.9.2):** set `citation_granularity="phrase"` in
+`ExtractOptions` for matching words, offsets and match scores. A citation includes
+a box only when the phrase can be located; some citations keep only block/page
+references. Turbo returns no citations. See the
+[phrase citation guide](https://documentation.datalab.to/docs/recipes/structured-extraction/api-overview#phrase-level-citations).
+
 ## Redaction
 
 **Open beta (SDK 0.9.0):** the redaction API may change.
@@ -132,7 +138,7 @@ PDF, including one with failed verification. Redaction returns a typed result;
 
 | Method | Endpoint |
 | --- | --- |
-| `run_agent()` | **Beta:** run an existing published processor (`AgentOptions(processor="cp_...")`) |
+| `run_agent()` | **Beta:** run an existing published processor (`AgentOptions(processor="cp_...")`, or built-in `jats` / `wcag`) |
 | `segment()` | Split a document into sections (`SegmentOptions`) |
 | `fill()` | Fill a PDF or image form (`FormFillingOptions`) |
 | `form_fields()` | Find the fillable fields in a PDF or image |
@@ -144,6 +150,11 @@ PDF, including one with failed verification. Redaction returns a typed result;
 | `create_pipeline()`, `run_pipeline()`, ... | [Pipelines](https://documentation.datalab.to/docs/welcome/sdk/pipelines) |
 
 `run_custom_processor()` and `ocr()` call deprecated API endpoints. Use `run_agent()` and `convert()` instead.
+
+The published `jats` processor returns JATS XML; `wcag` returns an Accessible PDF.
+Inspect `finished`, `verdict` and `verifier_metrics` before using either artifact.
+[Fixed processor examples](https://documentation.datalab.to/docs/recipes/document-agent/jats-and-accessible-pdf)
+show the result fields and version pinning.
 
 Published-agent execution is in open beta; the API may change. Processor design and raw-prompt execution are not included.
 
