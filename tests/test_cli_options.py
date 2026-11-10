@@ -111,6 +111,15 @@ def test_extract_with_schema_id_and_extraction_mode(tmp_path):
     assert options.page_schema == ""
 
 
+def test_extract_with_phrase_citations(tmp_path):
+    result, process = _run(
+        ["extract", "--schema_id", "sch_1", "--citation_granularity", "phrase"],
+        tmp_path,
+    )
+    assert result.exit_code == 0, result.output
+    assert process.call_args.kwargs["options"].citation_granularity == "phrase"
+
+
 def test_extract_needs_one_schema(tmp_path):
     result, _ = _run(["extract"], tmp_path)
     assert result.exit_code != 0

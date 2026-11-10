@@ -3,6 +3,16 @@
 The newest release is at the top. Each export to this repository uses the
 top section as its commit message.
 
+## 0.9.2
+
+New:
+
+- **Open beta:** `ExtractOptions(citation_granularity="phrase")` and the
+  `extract --citation_granularity phrase` CLI flag. Each citation then gives
+  the exact words of the value in its block, their offset and length, a match
+  score, and a box in page pixels when the phrase has its own box. The default
+  stays block IDs. The citation format may change.
+
 ## 0.9.1
 
 Changed:

@@ -69,6 +69,7 @@ API_FIELDS = {
         "webhook_url",
         "processing_location",
         "extraction_mode",
+        "citation_granularity",
     },
     "/api/v1/segment": {
         "file",

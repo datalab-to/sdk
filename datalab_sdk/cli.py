@@ -659,6 +659,12 @@ def convert(
     help="Extraction mode (the API default is balanced)",
 )
 @click.option(
+    "--citation_granularity",
+    type=click.Choice(["block", "phrase"]),
+    default=None,
+    help="Citation detail: block ids (the API default) or the exact phrase of each value (open beta)",
+)
+@click.option(
     "--save_checkpoint", is_flag=True, help="Save a checkpoint for later calls"
 )
 @webhook_option
@@ -672,6 +678,7 @@ def extract(
     output_format: str,
     mode: Optional[str],
     extraction_mode: Optional[str],
+    citation_granularity: Optional[str],
     save_checkpoint: bool,
     webhook_url: Optional[str],
     api_key: str,
@@ -695,6 +702,7 @@ def extract(
         checkpoint_id=checkpoint_id,
         output_format=output_format or "markdown",
         extraction_mode=extraction_mode,
+        citation_granularity=citation_granularity,
         save_checkpoint=save_checkpoint,
         webhook_url=webhook_url,
         max_pages=max_pages,

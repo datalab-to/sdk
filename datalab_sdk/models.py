@@ -141,6 +141,10 @@ class ExtractOptions(ProcessingOptions):
     # Extraction mode: turbo, fast, balanced, accurate. None lets the API
     # choose (the default is balanced). Turbo needs a file, not a checkpoint.
     extraction_mode: Optional[str] = None
+    # Citation granularity: "block" (the API default) returns block ids;
+    # "phrase" (open beta) returns the words, offsets, match score and box of
+    # each value.
+    citation_granularity: Optional[str] = None
     output_format: str = "markdown"  # markdown, json, html, chunks
     save_checkpoint: bool = False
     webhook_url: Optional[str] = None
