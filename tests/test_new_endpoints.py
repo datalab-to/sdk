@@ -11,6 +11,7 @@ from datalab_sdk import AsyncDatalabClient, DatalabClient
 from datalab_sdk.models import (
     CustomProcessorOptions,
     ExtractionSchemaSuggestions,
+    FormFieldsOptions,
     FormFieldsResult,
     AgentOptions,
     AgentResult,
@@ -106,6 +107,35 @@ async def test_form_fields_builds_result(pdf):
     assert req.await_args.args[1] == "/api/v1/form-fields"
     assert isinstance(result, FormFieldsResult)
     assert result.pages[0]["fields"][0]["field_type"] == "signature"
+
+
+@pytest.mark.asyncio
+async def test_form_fields_with_text_keeps_the_text_json_and_error(pdf):
+    async with AsyncDatalabClient(api_key="k") as client:
+        with (
+            patch.object(client, "_make_request", new_callable=AsyncMock) as req,
+            patch.object(client, "_poll_result", new_callable=AsyncMock) as poll,
+        ):
+            req.return_value = INITIAL
+            poll.return_value = {
+                "status": "complete",
+                "success": True,
+                "pages": [
+                    {"page": 0, "fields": [], "error": "", "text": "Name: [name]"}
+                ],
+                "json": {"children": []},
+                "text_error": "",
+                "page_count": 1,
+            }
+            result = await client.form_fields(
+                pdf, options=FormFieldsOptions(include_text=True)
+            )
+    assert any(
+        f[0]["name"] == "include_text" for f in req.await_args.kwargs["data"]._fields
+    )
+    assert result.pages[0]["text"] == "Name: [name]"
+    assert result.json == {"children": []}
+    assert result.text_error == ""
 
 
 @pytest.mark.asyncio

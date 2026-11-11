@@ -29,6 +29,15 @@ ASYNC_RETURN_VALUE = [
 ]
 
 
+def close_coroutine_and_return_results(coroutine):
+    """Stand-in for asyncio.run: close the coroutine that the CLI built, so it is never left unawaited.
+
+    An unawaited coroutine warns when the garbage collector frees it, which can land inside a later test
+    that counts warnings (test_client_methods.py::TestOCRMethod)."""
+    coroutine.close()
+    return ASYNC_RETURN_VALUE
+
+
 class TestConvertCommand:
     """Test the convert command"""
 
@@ -36,7 +45,7 @@ class TestConvertCommand:
     def test_convert_successful_single_file(self, mock_client_class):
         """Test successful conversion of a single file"""
         # Mock the client
-        mock_client_class.return_value = ASYNC_RETURN_VALUE
+        mock_client_class.side_effect = close_coroutine_and_return_results
 
         runner = CliRunner()
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
@@ -66,7 +75,7 @@ class TestConvertCommand:
     def test_convert_with_env_var(self, mock_client_class):
         """Test convert command using environment variable for API key"""
 
-        mock_client_class.return_value = ASYNC_RETURN_VALUE
+        mock_client_class.side_effect = close_coroutine_and_return_results
 
         runner = CliRunner()
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
@@ -88,7 +97,7 @@ class TestConvertCommand:
     def test_convert_missing_api_key(self, mock_client_class):
         """Test convert command with missing API key"""
 
-        mock_client_class.return_value = ASYNC_RETURN_VALUE
+        mock_client_class.side_effect = close_coroutine_and_return_results
 
         runner = CliRunner()
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:

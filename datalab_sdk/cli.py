@@ -963,10 +963,16 @@ def fill(
 
 @click.command("form-fields")
 @click.argument("path", type=click.Path(exists=True))
+@click.option(
+    "--include_text",
+    is_flag=True,
+    help="Also read the page text and mark each field in it (slower)",
+)
 @webhook_option
 @common_options
 def form_fields(
     path: str,
+    include_text: bool,
     webhook_url: Optional[str],
     api_key: str,
     output_dir: str,
@@ -985,6 +991,7 @@ def form_fields(
         max_pages=max_pages,
         page_range=page_range,
         skip_cache=skip_cache,
+        include_text=include_text,
     )
     process_documents(
         path=path,

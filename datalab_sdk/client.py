@@ -1480,7 +1480,8 @@ class AsyncDatalabClient:
         Find the fillable fields on each page of a PDF or image
 
         The API finds blank lines, empty boxes, tick boxes and signature
-        blanks, with their printed labels.
+        blanks, with their printed labels. With options.include_text, it also
+        reads the page text and marks each field in that text.
 
         Args:
             file_path: Path to the PDF or image
@@ -1518,6 +1519,8 @@ class AsyncDatalabClient:
             success=result_data.get("success"),
             error=result_data.get("error"),
             pages=result_data.get("pages"),
+            json=result_data.get("json"),
+            text_error=result_data.get("text_error"),
             page_count=result_data.get("page_count"),
             cost_breakdown=result_data.get("cost_breakdown"),
             runtime=result_data.get("runtime"),
@@ -3338,8 +3341,6 @@ class DatalabClient:
     def delete_result(self, request_id: str) -> Dict[str, Any]:
         """Delete the stored result of a finished request (sync version)"""
         return self._run_async(self._async_client.delete_result(request_id=request_id))
-
-    # --- Eval Rubric methods (sync) ---
 
     # Workflow methods (sync)
     def create_workflow(

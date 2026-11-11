@@ -297,6 +297,9 @@ class FormFieldsOptions(ProcessingOptions):
 
     webhook_url: Optional[str] = None
     processing_location: Optional[str] = None  # residency region, e.g. "eu"
+    # Also read the page text (fast mode OCR, in parallel) and put each field into
+    # it. Slower, and billed as a fast parse plus form fields.
+    include_text: bool = False
 
 
 @dataclass
@@ -814,12 +817,20 @@ class FormFieldsResult:
     has 'field_type', 'bbox' ([x0, y0, x1, y1] as page fractions), 'label'
     (the printed label) and 'name' (a short descriptive name, empty when the
     printed label is enough).
+
+    With FormFieldsOptions(include_text=True), each page also has 'text' (the
+    page text with every field marked where a reader meets it) and 'json' is
+    the fast mode parse JSON with an <input data-field-index> tag in the HTML
+    of each block that holds a field. 'text_error' is set when the page text
+    could not be read; the fields are still returned.
     """
 
     status: str
     success: Optional[bool] = None
     error: Optional[str] = None
     pages: Optional[List[Dict[str, Any]]] = None
+    json: Optional[Dict[str, Any]] = None
+    text_error: Optional[str] = None
     page_count: Optional[int] = None
     cost_breakdown: Optional[Dict[str, Any]] = None
     runtime: Optional[float] = None
@@ -839,6 +850,8 @@ class FormFieldsResult:
                     "success": self.success,
                     "error": self.error,
                     "pages": self.pages,
+                    "json": self.json,
+                    "text_error": self.text_error,
                     "page_count": self.page_count,
                 },
                 indent=2,

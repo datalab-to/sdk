@@ -123,6 +123,7 @@ API_FIELDS = {
         "skip_cache",
         "webhook_url",
         "processing_location",
+        "include_text",
     },
     "/api/v1/fill": {
         "file",
