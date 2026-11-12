@@ -526,6 +526,14 @@ class AsyncDatalabClient:
                         result_url = value
                     elif prefix == "progress_percent" and event == "number":
                         progress_percent = value
+            except aiohttp.ClientError as e:
+                # Body reads can fail after headers arrive. Keep known error
+                # statuses so an interrupted error body cannot change retries.
+                if resp.status >= 400:
+                    raise _api_error_from_body(
+                        resp.status, b"", resp.reason, resp.headers.get("Retry-After")
+                    ) from e
+                raise DatalabAPIError(f"Request failed: {str(e)}") from e
             finally:
                 resp.release()
 
