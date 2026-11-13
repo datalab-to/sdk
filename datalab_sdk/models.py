@@ -985,7 +985,9 @@ class PipelineExecution:
     execution_id: str  # pex_XXXXX
     pipeline_id: str  # pl_XXXXX
     pipeline_version: int
-    status: str  # pending, running, completed, completed_with_errors, failed
+    status: (
+        str  # pending, running, completed, completed_with_errors, needs_review, failed
+    )
     steps: List[PipelineExecutionStepResult] = field(default_factory=list)
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
@@ -1027,3 +1029,164 @@ class CustomProcessorVersion:
     created_at: Optional[str] = None
     runtime: Optional[float] = None
     is_active: bool = False
+
+
+# --- Eval models (open beta; the API may change) ---
+
+
+@dataclass
+class EvalVariant:
+    """One variant that an Eval runs and compares, with its own settings.
+
+    `steps` maps a step type ("convert" or "extract") to the settings that
+    this variant merges into that step's settings, for example
+    {"convert": {"output_mode": "accurate"}}. Open beta: the API may change.
+    """
+
+    name: str
+    steps: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to a dict for the create_eval request body"""
+        return {"name": self.name, "steps": self.steps}
+
+
+@dataclass
+class EvalDocumentResult:
+    """One document's result for one variant of an Eval (open beta).
+
+    `share` is this variant's share of the decided places (won / decided) on
+    this document. None until the comparison ends, or when nothing was
+    decided.
+    """
+
+    file_name: str
+    status: str  # processing, completed, failed
+    file_id: Optional[int] = None
+    lookup_key: Optional[str] = None
+    request_id: Optional[int] = None
+    share: Optional[float] = None
+    won: int = 0
+    decided: int = 0
+    undecided: Optional[int] = 0
+
+
+@dataclass
+class EvalFile:
+    """One file of an Eval, with its comparison status (open beta)."""
+
+    file_id: int
+    file_name: str
+    comparison: str = (
+        "pending"  # pending, starting, running, completed, failed, skipped
+    )
+    comparison_error: Optional[str] = None
+
+
+@dataclass
+class EvalVariantResult:
+    """One variant's settings and result in an Eval (open beta; the API may change).
+
+    `share` is this variant's share of the decided places (won / decided)
+    over the documents compared so far. It is relative to the other
+    variants in the same Eval, not an absolute quality score.
+    """
+
+    name: str
+    steps: Dict[str, Dict[str, Any]]
+    status: str  # running, completed, failed
+    share: Optional[float] = None
+    won: int = 0
+    decided: int = 0
+    documents_compared: int = 0
+    documents_total: int = 0
+    # Tables that continue across a page break, kept as one table. Zero total
+    # when the variants do not differ in merge_cross_page, or no table crosses a break.
+    page_breaks_passed: int = 0
+    page_breaks_total: int = 0
+    # The scored Convert settings this variant ran with: output_mode and merge_cross_page.
+    convert_settings: Dict[str, Any] = field(default_factory=dict)
+    # The scored Extract settings of the variant (extraction_mode), for an Eval of Extract.
+    extract_settings: Dict[str, Any] = field(default_factory=dict)
+    # Places where the variants differ but no reading was decided. None when unknown.
+    undecided: Optional[int] = 0
+    # The list price per 1,000 pages quoted when the variant's requests started
+    # (before any discount), in cents.
+    rate_per_1000_pages_cents: Optional[float] = None
+    seconds_per_page: Optional[float] = None
+    # Per-document results. Only present on get_eval(), not on create_eval() or list_evals().
+    documents: Optional[List[EvalDocumentResult]] = None
+
+
+@dataclass
+class Eval:
+    """Status and results of an Eval that compares pipeline variants (open beta; the API may change)."""
+
+    eval_id: int
+    pipeline_id: str
+    status: str  # running, completed, failed
+    variants: List[EvalVariantResult] = field(default_factory=list)
+    pipeline_name: Optional[str] = None
+    pipeline_version: Optional[int] = None
+    # "convert" (the pages) or "extract" (the fields of the pipeline's Extract step)
+    compared_step: str = "convert"
+    collection_id: Optional[int] = None
+    file_ids: Optional[List[int]] = None
+    # The files of the Eval, with names and comparison status. Only on get_eval().
+    files: Optional[List[EvalFile]] = None
+    created: Optional[str] = None
+
+
+@dataclass
+class EvalList:
+    """A page of the team's Evals, newest first (open beta; the API may change)."""
+
+    evals: List[Eval] = field(default_factory=list)
+    total: int = 0
+
+
+@dataclass
+class EvalDifference:
+    """One place where an Eval's variants read a document differently (open beta).
+
+    `verdict` is "decided", "none", "unclear" or "ignored". `decided_by` is
+    "text_layer", "judge", or "" when not decided. For a table difference,
+    `question` holds the question about the cell in place of before/after.
+    For an Eval of Extract, `description` is the schema's description of the
+    field that `question` names.
+    """
+
+    page: int
+    before: str
+    after: str
+    readings: List[str] = field(default_factory=list)
+    winners: List[int] = field(default_factory=list)
+    verdict: str = "none"
+    decided_by: str = ""
+    weight: float = 0.0
+    question: str = ""
+    boxes: List[List[float]] = field(default_factory=list)
+    description: str = ""
+
+
+@dataclass
+class EvalField:
+    """An Eval of Extract: one compared field and each variant's value, equal or not (open beta).
+
+    `values` follows EvalDifferences.variant_names. An empty string means no value.
+    """
+
+    path: str
+    description: str = ""
+    values: List[str] = field(default_factory=list)
+
+
+@dataclass
+class EvalDifferences:
+    """Where an Eval's variants read one document differently (open beta; the API may change)."""
+
+    file_id: int
+    variant_names: List[str] = field(default_factory=list)
+    differences: List[EvalDifference] = field(default_factory=list)
+    # An Eval of Extract: every compared field with each variant's value. Empty for Convert.
+    fields: List[EvalField] = field(default_factory=list)

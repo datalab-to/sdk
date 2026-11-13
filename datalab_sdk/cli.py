@@ -26,9 +26,11 @@ from datalab_sdk.models import (
     ProcessingOptions,
     WorkflowStep,
     InputConfig,
+    EvalVariant,
 )
 from datalab_sdk.exceptions import DatalabError
 from datalab_sdk.settings import settings
+import dataclasses
 import json
 
 
@@ -1151,6 +1153,239 @@ def create_document(
         sys.exit(1)
 
 
+# Eval commands (open beta; the API may change)
+
+
+def _eval_client(api_key: Optional[str], base_url: str) -> DatalabClient:
+    if api_key is None:
+        api_key = settings.DATALAB_API_KEY
+    if api_key is None:
+        raise DatalabError(
+            "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
+            "Get a free API key at https://www.datalab.to/app/keys"
+        )
+    return DatalabClient(api_key=api_key, base_url=base_url)
+
+
+def _print_eval_summary(evaluation) -> None:
+    click.echo(
+        f"Eval {evaluation.eval_id}: {evaluation.status} "
+        f"(pipeline {evaluation.pipeline_id}, compares {evaluation.compared_step})"
+    )
+    for variant in evaluation.variants:
+        share = f"{variant.share * 100:.0f}%" if variant.share is not None else "n/a"
+        rate = (
+            f"${variant.rate_per_1000_pages_cents / 100:.2f}/1000 pages"
+            if variant.rate_per_1000_pages_cents is not None
+            else "n/a"
+        )
+        speed = (
+            f"{variant.seconds_per_page:.2f}s/page"
+            if variant.seconds_per_page is not None
+            else "n/a"
+        )
+        click.echo(
+            f"  {variant.name}: share={share} decided={variant.decided} won={variant.won} "
+            f"rate={rate} speed={speed}"
+        )
+
+
+eval_option_api_key = click.option("--api_key", required=False, help="Datalab API key")
+eval_option_base_url = click.option(
+    "--base_url", default=settings.DATALAB_HOST, help="API base URL"
+)
+eval_option_json = click.option(
+    "--json", "json_output", is_flag=True, help="Print the raw result as JSON"
+)
+
+
+@click.group("eval")
+def eval_group():
+    """[Open beta] Compare pipeline variants, head to head."""
+    pass
+
+
+@eval_group.command("run")
+@click.argument("paths", nargs=-1, type=click.Path(exists=True))
+@click.option(
+    "--pipeline",
+    "pipeline_id",
+    required=True,
+    help="Pipeline ID to evaluate (pl_XXXXX)",
+)
+@click.option(
+    "--collection_id",
+    type=int,
+    help="Collection ID to evaluate, instead of FILE paths",
+)
+@click.option(
+    "--variant-json",
+    "variants_json",
+    help='Variants as JSON or a path to a JSON file: [{"name": "Accurate", '
+    '"steps": {"convert": {"output_mode": "accurate"}}}, ...]. Omit to '
+    "compare the default Fast/Balanced/Accurate modes.",
+)
+@click.option(
+    "--version", type=int, help="Pipeline version to run (0=draft, omit=active)"
+)
+@click.option(
+    "--wait", is_flag=True, help="Poll until the Eval finishes and print a summary"
+)
+@click.option(
+    "--poll_interval", default=10, type=int, help="Seconds between polls with --wait"
+)
+@click.option(
+    "--timeout", default=7200, type=int, help="Maximum seconds to wait with --wait"
+)
+@eval_option_json
+@eval_option_api_key
+@eval_option_base_url
+def eval_run(
+    paths,
+    pipeline_id: str,
+    collection_id: Optional[int],
+    variants_json: Optional[str],
+    version: Optional[int],
+    wait: bool,
+    poll_interval: int,
+    timeout: int,
+    json_output: bool,
+    api_key: Optional[str],
+    base_url: str,
+):
+    """[Open beta] Run an Eval: compare pipeline variants on FILE paths or a collection."""
+    try:
+        if bool(paths) == bool(collection_id):
+            raise click.UsageError(
+                "Give either FILE paths or --collection_id, not both."
+            )
+        variants = None
+        if variants_json is not None:
+            data = _load_json_option(variants_json, "--variant-json")
+            variants = [
+                EvalVariant(name=v["name"], steps=v.get("steps", {})) for v in data
+            ]
+
+        client = _eval_client(api_key, base_url)
+        file_ids = None
+        if paths:
+            uploaded = client.upload_files(list(paths))
+            if not isinstance(uploaded, list):
+                uploaded = [uploaded]
+            file_ids = [u.file_id for u in uploaded]
+
+        evaluation = client.create_eval(
+            pipeline_id,
+            file_ids=file_ids,
+            collection_id=collection_id,
+            variants=variants,
+            version=version,
+        )
+        if wait:
+            evaluation = client.wait_for_eval(
+                evaluation.eval_id, poll_interval=poll_interval, timeout=timeout
+            )
+            if json_output:
+                click.echo(json.dumps(dataclasses.asdict(evaluation), indent=2))
+            else:
+                _print_eval_summary(evaluation)
+        elif json_output:
+            click.echo(json.dumps(dataclasses.asdict(evaluation), indent=2))
+        else:
+            click.echo(f"Eval {evaluation.eval_id} started ({evaluation.status}).")
+            click.echo(f"Check it with: datalab eval get {evaluation.eval_id}")
+    except DatalabError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@eval_group.command("get")
+@click.argument("eval_id", type=int)
+@eval_option_json
+@eval_option_api_key
+@eval_option_base_url
+def eval_get(eval_id: int, json_output: bool, api_key: Optional[str], base_url: str):
+    """[Open beta] Get an Eval's status and each variant's result."""
+    try:
+        client = _eval_client(api_key, base_url)
+        evaluation = client.get_eval(eval_id)
+        if json_output:
+            click.echo(json.dumps(dataclasses.asdict(evaluation), indent=2))
+        else:
+            _print_eval_summary(evaluation)
+    except DatalabError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@eval_group.command("list")
+@click.option("--pipeline_id", help="Only Evals of this pipeline")
+@click.option("--collection_id", type=int, help="Only Evals of this collection")
+@click.option("--limit", default=20, type=int, help="Maximum number to return")
+@click.option("--offset", default=0, type=int, help="Offset for pagination")
+@eval_option_json
+@eval_option_api_key
+@eval_option_base_url
+def eval_list(
+    pipeline_id: Optional[str],
+    collection_id: Optional[int],
+    limit: int,
+    offset: int,
+    json_output: bool,
+    api_key: Optional[str],
+    base_url: str,
+):
+    """[Open beta] List the team's Evals, newest first."""
+    try:
+        client = _eval_client(api_key, base_url)
+        result = client.list_evals(
+            pipeline_id=pipeline_id,
+            collection_id=collection_id,
+            limit=limit,
+            offset=offset,
+        )
+        if json_output:
+            click.echo(json.dumps(dataclasses.asdict(result), indent=2))
+        else:
+            click.echo(f"{result.total} Eval(s):")
+            for evaluation in result.evals:
+                click.echo(
+                    f"  {evaluation.eval_id}: {evaluation.status} (pipeline {evaluation.pipeline_id})"
+                )
+    except DatalabError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
+@eval_group.command("differences")
+@click.argument("eval_id", type=int)
+@click.argument("file_id", type=int)
+@eval_option_json
+@eval_option_api_key
+@eval_option_base_url
+def eval_differences(
+    eval_id: int, file_id: int, json_output: bool, api_key: Optional[str], base_url: str
+):
+    """[Open beta] Show where an Eval's variants read one document differently."""
+    try:
+        client = _eval_client(api_key, base_url)
+        result = client.get_eval_differences(eval_id, file_id)
+        if json_output:
+            click.echo(json.dumps(dataclasses.asdict(result), indent=2))
+        else:
+            click.echo(
+                f"File {result.file_id}: variants {', '.join(result.variant_names)}"
+            )
+            for d in result.differences:
+                label = d.question or d.before[:40]
+                click.echo(
+                    f"  page {d.page} [{d.verdict}] {label!r} -> winners {d.winners}"
+                )
+    except DatalabError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+
+
 # Workflow commands
 def _echo_workflows_removed():
     click.echo(
@@ -1659,6 +1894,7 @@ cli.add_command(fill)
 cli.add_command(form_fields)
 cli.add_command(agent)
 cli.add_command(create_document)
+cli.add_command(eval_group)
 cli.add_command(create_workflow)
 cli.add_command(get_workflow)
 cli.add_command(get_step_types)

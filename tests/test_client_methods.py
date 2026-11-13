@@ -539,9 +539,13 @@ class TestOCRMethod:
                     with warnings.catch_warnings(record=True) as w:
                         warnings.simplefilter("always")
                         result = await client.ocr(pdf_file)
-                        assert len(w) == 1
-                        assert issubclass(w[0].category, DeprecationWarning)
-                        assert "deprecated" in str(w[0].message).lower()
+                        deprecations = [
+                            x
+                            for x in w
+                            if issubclass(x.category, DeprecationWarning)
+                            and "deprecated" in str(x.message).lower()
+                        ]
+                        assert len(deprecations) == 1
 
                     assert isinstance(result, OCRResult)
                     assert result.success is True

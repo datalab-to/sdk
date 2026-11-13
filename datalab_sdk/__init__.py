@@ -52,6 +52,15 @@ from .models import (
     PipelineExecutionStepResult,
     CustomProcessor,
     CustomProcessorVersion,
+    Eval,
+    EvalDifference,
+    EvalDifferences,
+    EvalField,
+    EvalDocumentResult,
+    EvalFile,
+    EvalList,
+    EvalVariant,
+    EvalVariantResult,
 )
 from .settings import settings
 
@@ -102,4 +111,13 @@ __all__ = [
     "PipelineExecutionStepResult",
     "CustomProcessor",
     "CustomProcessorVersion",
+    "Eval",
+    "EvalDifference",
+    "EvalDifferences",
+    "EvalField",
+    "EvalDocumentResult",
+    "EvalFile",
+    "EvalList",
+    "EvalVariant",
+    "EvalVariantResult",
 ]

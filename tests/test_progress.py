@@ -181,6 +181,30 @@ async def test_pipeline_submission_and_polling_share_monotonic_callback():
 
 
 @pytest.mark.asyncio
+async def test_pipeline_polling_stops_at_needs_review_and_reports_complete():
+    updates = []
+    running = {"execution_id": "pex_test", "status": "running", "progress_percent": 40}
+    async with AsyncDatalabClient(api_key="test") as client:
+        with patch.object(
+            client,
+            "_make_request",
+            AsyncMock(
+                side_effect=[
+                    running,
+                    {**running, "status": "needs_review", "progress_percent": 99},
+                    {**running, "status": "completed", "progress_percent": 100},
+                ]
+            ),
+        ) as poll:
+            result = await client.get_pipeline_execution(
+                "pex_test", max_polls=5, poll_interval=0, on_progress=updates.append
+            )
+    assert result.status == "needs_review"
+    assert poll.await_count == 2
+    assert updates[-1] == 100
+
+
+@pytest.mark.asyncio
 async def test_pipeline_single_poll_preserves_progress_and_failed_status():
     client = AsyncDatalabClient(api_key="test")
     updates = []

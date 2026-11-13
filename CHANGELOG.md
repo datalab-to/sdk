@@ -3,6 +3,20 @@
 The newest release is at the top. Each export to this repository uses the
 top section as its commit message.
 
+## 0.10.0
+
+New:
+
+- **Open beta:** Evals on both clients and the CLI. `create_eval()` runs 2 to
+  4 variants of a pipeline on the same files or collection and compares them;
+  `get_eval()`, `list_evals()`, and `get_eval_differences()` read the status,
+  results, and per-document differences; `wait_for_eval()` polls until the
+  Eval completes or fails. New models: `Eval`, `EvalVariant`,
+  `EvalVariantResult`, `EvalDocumentResult`, `EvalFile`, `EvalDifference`, and
+  `EvalDifferences`. New CLI commands: `datalab eval run`, `datalab eval get`,
+  `datalab eval list`, and `datalab eval differences`. The Eval API may
+  change.
+
 ## 0.9.2
 
 New:
@@ -39,6 +53,10 @@ New:
 
 Fixed:
 
+- `run_pipeline()` and `get_pipeline_execution()` stop polling when an
+  execution ends as `needs_review` (its output is ready, but a blocking Check
+  failed or it reached its cost limit) and report it to `on_progress` as
+  complete. Before, they polled until `max_polls` ran out.
 - Synchronous calls propagate an operation's `RuntimeError` without attempting
   to rerun its coroutine. Calling the synchronous client inside an active event
   loop now directs callers to `AsyncDatalabClient`.

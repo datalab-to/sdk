@@ -65,6 +65,15 @@ from datalab_sdk.models import (
     PipelineExecutionStepResult,
     CustomProcessor,
     CustomProcessorVersion,
+    Eval,
+    EvalDifference,
+    EvalDifferences,
+    EvalDocumentResult,
+    EvalField,
+    EvalFile,
+    EvalList,
+    EvalVariant,
+    EvalVariantResult,
 )
 from datalab_sdk.settings import settings
 
@@ -94,6 +103,16 @@ class _ProgressReporter:
 
 # HTTP status codes that a POST submission can safely retry. The API sends
 # 429 for rate limits and 503 when it cannot queue the job ("please retry").
+# Pipeline execution statuses that end polling. ``needs_review``: the output is
+# ready, but a blocking Check failed or the Request hit its cost limit.
+_OUTPUT_READY_PIPELINE_STATUSES = ("completed", "needs_review")
+_TERMINAL_PIPELINE_STATUSES = (
+    "completed",
+    "completed_with_errors",
+    "needs_review",
+    "failed",
+)
+
 _SUBMIT_RETRY_STATUSES = (429, 503)
 _BACKOFF = wait_exponential_jitter(initial=5, max=120)
 _MAX_RETRY_AFTER_SECONDS = 120.0
@@ -2623,15 +2642,12 @@ class AsyncDatalabClient:
         execution = self._build_pipeline_execution(response)
         progress = _ProgressReporter(on_progress)
         await progress.report(
-            execution.progress_percent, complete=execution.status == "completed"
+            execution.progress_percent,
+            complete=execution.status in _OUTPUT_READY_PIPELINE_STATUSES,
         )
 
         # Poll if requested
-        if max_polls > 1 and execution.status not in (
-            "completed",
-            "completed_with_errors",
-            "failed",
-        ):
+        if max_polls > 1 and execution.status not in _TERMINAL_PIPELINE_STATUSES:
 
             async def forward_progress(percent: int) -> None:
                 await progress.report(percent, complete=percent == 100)
@@ -2667,10 +2683,11 @@ class AsyncDatalabClient:
             )
             execution = self._build_pipeline_execution(response)
             await progress.report(
-                execution.progress_percent, complete=execution.status == "completed"
+                execution.progress_percent,
+                complete=execution.status in _OUTPUT_READY_PIPELINE_STATUSES,
             )
 
-            if execution.status in ("completed", "completed_with_errors", "failed"):
+            if execution.status in _TERMINAL_PIPELINE_STATUSES:
                 return execution
 
             if i < max_polls - 1:
@@ -2861,6 +2878,240 @@ class AsyncDatalabClient:
         """
         return await self._make_request(
             "POST", f"/api/v1/custom_processors/{processor_id}/archive"
+        )
+
+    # --- Eval methods ---
+
+    async def create_eval(
+        self,
+        pipeline_id: str,
+        *,
+        file_ids: Optional[list[int]] = None,
+        collection_id: Optional[int] = None,
+        variants: Optional[list[EvalVariant]] = None,
+        version: Optional[int] = None,
+    ) -> Eval:
+        """
+        Run 2 to 4 variants of a pipeline on the same documents and compare them.
+
+        Open beta: the API may change.
+
+        Give exactly one of file_ids (uploaded with upload_files()) or
+        collection_id. With no variants, the Eval compares the Fast,
+        Balanced and Accurate modes. A variant may change only the mode
+        settings: for a pipeline of Convert steps, output_mode and
+        merge_cross_page; for a pipeline with one Extract step,
+        extraction_mode and the Convert output_mode.
+
+        Args:
+            pipeline_id: Pipeline ID string (e.g. pl_k8Hx9mP2nQ4v)
+            file_ids: Uploaded file IDs to compare (mutually exclusive with collection_id)
+            collection_id: Collection whose files to compare (mutually exclusive with file_ids)
+            variants: 2 to 4 EvalVariant objects, each with a different name.
+                Omit to compare the default modes.
+            version: Pipeline version to run (0=draft, omit=active)
+        """
+        if (file_ids is None) == (collection_id is None):
+            raise DatalabValidationError(
+                "Give exactly one of file_ids or collection_id."
+            )
+        payload: Dict[str, Any] = {}
+        if file_ids is not None:
+            payload["file_ids"] = file_ids
+        if collection_id is not None:
+            payload["collection_id"] = collection_id
+        if variants is not None:
+            payload["variants"] = [v.to_dict() for v in variants]
+        if version is not None:
+            payload["version"] = version
+        response = await self._make_request(
+            "POST", f"/api/v1/pipelines/{pipeline_id}/evals", json=payload
+        )
+        return self._build_eval(response)
+
+    async def get_eval(self, eval_id: int) -> Eval:
+        """
+        Get an Eval's status, each variant's share of the differences, and each document
+
+        Open beta: the API may change.
+
+        Args:
+            eval_id: The Eval's ID
+        """
+        response = await self._make_request("GET", f"/api/v1/evals/{eval_id}")
+        return self._build_eval(response)
+
+    async def list_evals(
+        self,
+        pipeline_id: Optional[str] = None,
+        collection_id: Optional[int] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> EvalList:
+        """
+        List the team's Evals, newest first, without per-document results
+
+        Open beta: the API may change.
+
+        Args:
+            pipeline_id: Only Evals of this pipeline
+            collection_id: Only Evals of this collection
+            limit: Maximum number to return (default: 20, max: 100)
+            offset: Offset for pagination (default: 0)
+        """
+        params = f"limit={limit}&offset={offset}"
+        if pipeline_id is not None:
+            params += f"&pipeline_id={pipeline_id}"
+        if collection_id is not None:
+            params += f"&collection_id={collection_id}"
+        response = await self._make_request("GET", f"/api/v1/evals?{params}")
+        return EvalList(
+            evals=[self._build_eval(e) for e in response.get("evals", [])],
+            total=response.get("total", 0),
+        )
+
+    async def get_eval_differences(self, eval_id: int, file_id: int) -> EvalDifferences:
+        """
+        Get where an Eval's variants read one document differently, and which reading
+        matches the page
+
+        Open beta: the API may change.
+
+        Args:
+            eval_id: The Eval's ID
+            file_id: The file's ID, from get_eval().files
+        """
+        response = await self._make_request(
+            "GET", f"/api/v1/evals/{eval_id}/files/{file_id}/differences"
+        )
+        return EvalDifferences(
+            file_id=response.get("file_id", file_id),
+            variant_names=response.get("variant_names") or [],
+            differences=[
+                self._build_eval_difference(d)
+                for d in response.get("differences") or []
+            ],
+            fields=[
+                EvalField(
+                    path=f.get("path", ""),
+                    description=f.get("description", ""),
+                    values=f.get("values") or [],
+                )
+                for f in response.get("fields") or []
+            ],
+        )
+
+    async def wait_for_eval(
+        self,
+        eval_id: int,
+        *,
+        poll_interval: int = 10,
+        timeout: int = 7200,
+    ) -> Eval:
+        """
+        Poll get_eval() until the Eval completes or fails
+
+        Open beta: the API may change.
+
+        Args:
+            eval_id: The Eval's ID
+            poll_interval: Seconds between polls
+            timeout: Maximum seconds to wait before raising DatalabTimeoutError
+        """
+        slept = 0
+        while True:
+            result = await self.get_eval(eval_id)
+            if result.status in ("completed", "failed"):
+                return result
+            if slept >= timeout:
+                raise DatalabTimeoutError(
+                    f"Eval {eval_id} did not finish within {timeout} seconds"
+                )
+            await asyncio.sleep(poll_interval)
+            slept += poll_interval
+
+    @staticmethod
+    def _build_eval_document_result(data: Dict[str, Any]) -> EvalDocumentResult:
+        return EvalDocumentResult(
+            file_name=data.get("file_name", ""),
+            status=data.get("status", ""),
+            file_id=data.get("file_id"),
+            lookup_key=data.get("lookup_key"),
+            request_id=data.get("request_id"),
+            share=data.get("share"),
+            won=data.get("won", 0),
+            decided=data.get("decided", 0),
+            undecided=data.get("undecided", 0),
+        )
+
+    @staticmethod
+    def _build_eval_file(data: Dict[str, Any]) -> EvalFile:
+        return EvalFile(
+            file_id=data["file_id"],
+            file_name=data.get("file_name", ""),
+            comparison=data.get("comparison", "pending"),
+            comparison_error=data.get("comparison_error"),
+        )
+
+    @staticmethod
+    def _build_eval_difference(data: Dict[str, Any]) -> EvalDifference:
+        return EvalDifference(
+            page=data.get("page", 0),
+            before=data.get("before", ""),
+            after=data.get("after", ""),
+            readings=data.get("readings") or [],
+            winners=data.get("winners") or [],
+            verdict=data.get("verdict", "none"),
+            decided_by=data.get("decided_by", ""),
+            weight=data.get("weight", 0.0),
+            question=data.get("question", ""),
+            boxes=data.get("boxes") or [],
+            description=data.get("description", ""),
+        )
+
+    @classmethod
+    def _build_eval_variant_result(cls, data: Dict[str, Any]) -> EvalVariantResult:
+        documents = data.get("documents")
+        return EvalVariantResult(
+            name=data.get("name", ""),
+            steps=data.get("steps") or {},
+            status=data.get("status", ""),
+            share=data.get("share"),
+            won=data.get("won", 0),
+            decided=data.get("decided", 0),
+            documents_compared=data.get("documents_compared", 0),
+            documents_total=data.get("documents_total", 0),
+            page_breaks_passed=data.get("page_breaks_passed", 0),
+            page_breaks_total=data.get("page_breaks_total", 0),
+            convert_settings=data.get("convert_settings") or {},
+            extract_settings=data.get("extract_settings") or {},
+            undecided=data.get("undecided", 0),
+            rate_per_1000_pages_cents=data.get("rate_per_1000_pages_cents"),
+            seconds_per_page=data.get("seconds_per_page"),
+            documents=[cls._build_eval_document_result(d) for d in documents]
+            if documents is not None
+            else None,
+        )
+
+    @classmethod
+    def _build_eval(cls, data: Dict[str, Any]) -> Eval:
+        files = data.get("files")
+        return Eval(
+            eval_id=data.get("eval_id"),
+            pipeline_id=data.get("pipeline_id", ""),
+            status=data.get("status", ""),
+            variants=[
+                cls._build_eval_variant_result(v) for v in data.get("variants") or []
+            ],
+            pipeline_name=data.get("pipeline_name"),
+            pipeline_version=data.get("pipeline_version"),
+            compared_step=data.get("compared_step", "convert"),
+            collection_id=data.get("collection_id"),
+            file_ids=data.get("file_ids"),
+            files=[cls._build_eval_file(f) for f in files]
+            if files is not None
+            else None,
+            created=data.get("created"),
         )
 
 
@@ -3815,4 +4066,69 @@ class DatalabClient:
         """Archive a custom processor (sync version)"""
         return self._run_async(
             self._async_client.archive_custom_processor(processor_id=processor_id)
+        )
+
+    # --- Eval methods (sync) ---
+
+    def create_eval(
+        self,
+        pipeline_id: str,
+        *,
+        file_ids: Optional[list[int]] = None,
+        collection_id: Optional[int] = None,
+        variants: Optional[list[EvalVariant]] = None,
+        version: Optional[int] = None,
+    ) -> Eval:
+        """Run and compare pipeline variants (sync version). Open beta: the API may change."""
+        return self._run_async(
+            self._async_client.create_eval(
+                pipeline_id,
+                file_ids=file_ids,
+                collection_id=collection_id,
+                variants=variants,
+                version=version,
+            )
+        )
+
+    def get_eval(self, eval_id: int) -> Eval:
+        """Get an Eval's status and results (sync version). Open beta: the API may change."""
+        return self._run_async(self._async_client.get_eval(eval_id))
+
+    def list_evals(
+        self,
+        pipeline_id: Optional[str] = None,
+        collection_id: Optional[int] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> EvalList:
+        """List the team's Evals (sync version). Open beta: the API may change."""
+        return self._run_async(
+            self._async_client.list_evals(
+                pipeline_id=pipeline_id,
+                collection_id=collection_id,
+                limit=limit,
+                offset=offset,
+            )
+        )
+
+    def get_eval_differences(self, eval_id: int, file_id: int) -> EvalDifferences:
+        """Get one document's differences (sync version). Open beta: the API may change."""
+        return self._run_async(
+            self._async_client.get_eval_differences(eval_id, file_id)
+        )
+
+    def wait_for_eval(
+        self,
+        eval_id: int,
+        *,
+        poll_interval: int = 10,
+        timeout: int = 7200,
+    ) -> Eval:
+        """Poll until the Eval completes or fails (sync version). Open beta: the API may change."""
+        return self._run_async(
+            self._async_client.wait_for_eval(
+                eval_id,
+                poll_interval=poll_interval,
+                timeout=timeout,
+            )
         )

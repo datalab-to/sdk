@@ -2,7 +2,7 @@
 Simple tests for the CLI module
 """
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 import tempfile
 import os
 from click.testing import CliRunner
@@ -41,6 +41,7 @@ def close_coroutine_and_return_results(coroutine):
 class TestConvertCommand:
     """Test the convert command"""
 
+    @patch("datalab_sdk.cli.process_files_async", new=MagicMock())
     @patch("datalab_sdk.cli.asyncio.run")
     def test_convert_successful_single_file(self, mock_client_class):
         """Test successful conversion of a single file"""
@@ -71,6 +72,7 @@ class TestConvertCommand:
             finally:
                 os.unlink(tmp_file.name)
 
+    @patch("datalab_sdk.cli.process_files_async", new=MagicMock())
     @patch("datalab_sdk.cli.asyncio.run")
     def test_convert_with_env_var(self, mock_client_class):
         """Test convert command using environment variable for API key"""
@@ -93,6 +95,7 @@ class TestConvertCommand:
             finally:
                 os.unlink(tmp_file.name)
 
+    @patch("datalab_sdk.cli.process_files_async", new=MagicMock())
     @patch("datalab_sdk.cli.asyncio.run")
     def test_convert_missing_api_key(self, mock_client_class):
         """Test convert command with missing API key"""
