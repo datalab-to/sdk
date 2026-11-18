@@ -3,6 +3,32 @@
 The newest release is at the top. Each export to this repository uses the
 top section as its commit message.
 
+## 0.11.0
+
+Comparisons (open beta):
+
+- Evals are now Comparisons. Use `create_comparison()`, `get_comparison()`,
+  `list_comparisons()`, `get_comparison_differences()`, and
+  `wait_for_comparison()` on both clients. They call the new
+  `/api/v1/comparisons` routes. The comparison API may change.
+- New models: `Comparison`, `ComparisonVariant`, `ComparisonVariantResult`,
+  `ComparisonDocumentResult`, `ComparisonFile`, `ComparisonList`,
+  `ComparisonDifference`, `ComparisonDifferences`, and `ComparisonField`.
+  `Comparison.comparison_id` replaces `eval_id`, and
+  `ComparisonList.comparisons` replaces `evals`.
+- New CLI commands: `datalab compare run`, `datalab compare get`,
+  `datalab compare list`, and `datalab compare differences`.
+
+Deprecated:
+
+- The 0.10.0 names still work. `create_eval()`, `get_eval()`, `list_evals()`,
+  `get_eval_differences()`, and `wait_for_eval()` call the comparison methods
+  and raise a `DeprecationWarning`. The `Eval*` model names are aliases of the
+  `Comparison*` models. `Comparison.eval_id` and `ComparisonList.evals` are
+  read-only aliases. `datalab eval` runs the `datalab compare` commands, prints
+  a note, and keeps the 0.10.0 keys in its `--json` output. A future version
+  will remove these names.
+
 ## 0.10.0
 
 New:

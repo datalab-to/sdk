@@ -26,7 +26,7 @@ from datalab_sdk.models import (
     ProcessingOptions,
     WorkflowStep,
     InputConfig,
-    EvalVariant,
+    ComparisonVariant,
 )
 from datalab_sdk.exceptions import DatalabError
 from datalab_sdk.settings import settings
@@ -1153,10 +1153,13 @@ def create_document(
         sys.exit(1)
 
 
-# Eval commands (open beta; the API may change)
+# Compare commands (open beta; the API may change). `datalab eval` is the
+# deprecated 0.10.0 name of the same commands.
+
+_LEGACY_EVAL_META = "datalab_legacy_eval"
 
 
-def _eval_client(api_key: Optional[str], base_url: str) -> DatalabClient:
+def _compare_client(api_key: Optional[str], base_url: str) -> DatalabClient:
     if api_key is None:
         api_key = settings.DATALAB_API_KEY
     if api_key is None:
@@ -1167,12 +1170,31 @@ def _eval_client(api_key: Optional[str], base_url: str) -> DatalabClient:
     return DatalabClient(api_key=api_key, base_url=base_url)
 
 
-def _print_eval_summary(evaluation) -> None:
+def _legacy_eval() -> bool:
+    """True when the command runs as the deprecated `datalab eval`."""
+    return bool(click.get_current_context().meta.get(_LEGACY_EVAL_META))
+
+
+def _echo_json(result) -> None:
+    """Print a result as JSON. Under `datalab eval`, use the 0.10.0 keys."""
+    data = dataclasses.asdict(result)
+    if _legacy_eval():
+        if "comparison_id" in data:
+            data = {"eval_id": data.pop("comparison_id"), **data}
+        if "comparisons" in data:
+            data["evals"] = [
+                {"eval_id": c.pop("comparison_id"), **c}
+                for c in data.pop("comparisons")
+            ]
+    click.echo(json.dumps(data, indent=2))
+
+
+def _print_comparison_summary(comparison) -> None:
     click.echo(
-        f"Eval {evaluation.eval_id}: {evaluation.status} "
-        f"(pipeline {evaluation.pipeline_id}, compares {evaluation.compared_step})"
+        f"Comparison {comparison.comparison_id}: {comparison.status} "
+        f"(pipeline {comparison.pipeline_id}, compares {comparison.compared_step})"
     )
-    for variant in evaluation.variants:
+    for variant in comparison.variants:
         share = f"{variant.share * 100:.0f}%" if variant.share is not None else "n/a"
         rate = (
             f"${variant.rate_per_1000_pages_cents / 100:.2f}/1000 pages"
@@ -1190,33 +1212,46 @@ def _print_eval_summary(evaluation) -> None:
         )
 
 
-eval_option_api_key = click.option("--api_key", required=False, help="Datalab API key")
-eval_option_base_url = click.option(
+compare_option_api_key = click.option(
+    "--api_key", required=False, help="Datalab API key"
+)
+compare_option_base_url = click.option(
     "--base_url", default=settings.DATALAB_HOST, help="API base URL"
 )
-eval_option_json = click.option(
+compare_option_json = click.option(
     "--json", "json_output", is_flag=True, help="Print the raw result as JSON"
 )
 
 
-@click.group("eval")
-def eval_group():
+@click.group("compare")
+def compare_group():
     """[Open beta] Compare pipeline variants, head to head."""
     pass
 
 
-@eval_group.command("run")
+@click.group("eval", hidden=True)
+@click.pass_context
+def eval_group(ctx):
+    """Deprecated: use `datalab compare`."""
+    ctx.meta[_LEGACY_EVAL_META] = True
+    click.echo(
+        "Note: `datalab eval` is deprecated. Use `datalab compare` instead.",
+        err=True,
+    )
+
+
+@click.command("run")
 @click.argument("paths", nargs=-1, type=click.Path(exists=True))
 @click.option(
     "--pipeline",
     "pipeline_id",
     required=True,
-    help="Pipeline ID to evaluate (pl_XXXXX)",
+    help="Pipeline ID to compare (pl_XXXXX)",
 )
 @click.option(
     "--collection_id",
     type=int,
-    help="Collection ID to evaluate, instead of FILE paths",
+    help="Collection ID to compare, instead of FILE paths",
 )
 @click.option(
     "--variant-json",
@@ -1229,7 +1264,9 @@ def eval_group():
     "--version", type=int, help="Pipeline version to run (0=draft, omit=active)"
 )
 @click.option(
-    "--wait", is_flag=True, help="Poll until the Eval finishes and print a summary"
+    "--wait",
+    is_flag=True,
+    help="Poll until the comparison finishes and print a summary",
 )
 @click.option(
     "--poll_interval", default=10, type=int, help="Seconds between polls with --wait"
@@ -1237,10 +1274,10 @@ def eval_group():
 @click.option(
     "--timeout", default=7200, type=int, help="Maximum seconds to wait with --wait"
 )
-@eval_option_json
-@eval_option_api_key
-@eval_option_base_url
-def eval_run(
+@compare_option_json
+@compare_option_api_key
+@compare_option_base_url
+def compare_run(
     paths,
     pipeline_id: str,
     collection_id: Optional[int],
@@ -1253,7 +1290,7 @@ def eval_run(
     api_key: Optional[str],
     base_url: str,
 ):
-    """[Open beta] Run an Eval: compare pipeline variants on FILE paths or a collection."""
+    """[Open beta] Compare pipeline variants on FILE paths or a collection."""
     try:
         if bool(paths) == bool(collection_id):
             raise click.UsageError(
@@ -1263,10 +1300,11 @@ def eval_run(
         if variants_json is not None:
             data = _load_json_option(variants_json, "--variant-json")
             variants = [
-                EvalVariant(name=v["name"], steps=v.get("steps", {})) for v in data
+                ComparisonVariant(name=v["name"], steps=v.get("steps", {}))
+                for v in data
             ]
 
-        client = _eval_client(api_key, base_url)
+        client = _compare_client(api_key, base_url)
         file_ids = None
         if paths:
             uploaded = client.upload_files(list(paths))
@@ -1274,7 +1312,7 @@ def eval_run(
                 uploaded = [uploaded]
             file_ids = [u.file_id for u in uploaded]
 
-        evaluation = client.create_eval(
+        comparison = client.create_comparison(
             pipeline_id,
             file_ids=file_ids,
             collection_id=collection_id,
@@ -1282,51 +1320,55 @@ def eval_run(
             version=version,
         )
         if wait:
-            evaluation = client.wait_for_eval(
-                evaluation.eval_id, poll_interval=poll_interval, timeout=timeout
+            comparison = client.wait_for_comparison(
+                comparison.comparison_id, poll_interval=poll_interval, timeout=timeout
             )
             if json_output:
-                click.echo(json.dumps(dataclasses.asdict(evaluation), indent=2))
+                _echo_json(comparison)
             else:
-                _print_eval_summary(evaluation)
+                _print_comparison_summary(comparison)
         elif json_output:
-            click.echo(json.dumps(dataclasses.asdict(evaluation), indent=2))
+            _echo_json(comparison)
         else:
-            click.echo(f"Eval {evaluation.eval_id} started ({evaluation.status}).")
-            click.echo(f"Check it with: datalab eval get {evaluation.eval_id}")
+            click.echo(
+                f"Comparison {comparison.comparison_id} started ({comparison.status})."
+            )
+            click.echo(f"Check it with: datalab compare get {comparison.comparison_id}")
     except DatalabError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
-@eval_group.command("get")
-@click.argument("eval_id", type=int)
-@eval_option_json
-@eval_option_api_key
-@eval_option_base_url
-def eval_get(eval_id: int, json_output: bool, api_key: Optional[str], base_url: str):
-    """[Open beta] Get an Eval's status and each variant's result."""
+@click.command("get")
+@click.argument("comparison_id", type=int)
+@compare_option_json
+@compare_option_api_key
+@compare_option_base_url
+def compare_get(
+    comparison_id: int, json_output: bool, api_key: Optional[str], base_url: str
+):
+    """[Open beta] Get a comparison's status and each variant's result."""
     try:
-        client = _eval_client(api_key, base_url)
-        evaluation = client.get_eval(eval_id)
+        client = _compare_client(api_key, base_url)
+        comparison = client.get_comparison(comparison_id)
         if json_output:
-            click.echo(json.dumps(dataclasses.asdict(evaluation), indent=2))
+            _echo_json(comparison)
         else:
-            _print_eval_summary(evaluation)
+            _print_comparison_summary(comparison)
     except DatalabError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
-@eval_group.command("list")
-@click.option("--pipeline_id", help="Only Evals of this pipeline")
-@click.option("--collection_id", type=int, help="Only Evals of this collection")
+@click.command("list")
+@click.option("--pipeline_id", help="Only comparisons of this pipeline")
+@click.option("--collection_id", type=int, help="Only comparisons of this collection")
 @click.option("--limit", default=20, type=int, help="Maximum number to return")
 @click.option("--offset", default=0, type=int, help="Offset for pagination")
-@eval_option_json
-@eval_option_api_key
-@eval_option_base_url
-def eval_list(
+@compare_option_json
+@compare_option_api_key
+@compare_option_base_url
+def compare_list(
     pipeline_id: Optional[str],
     collection_id: Optional[int],
     limit: int,
@@ -1335,43 +1377,47 @@ def eval_list(
     api_key: Optional[str],
     base_url: str,
 ):
-    """[Open beta] List the team's Evals, newest first."""
+    """[Open beta] List the team's comparisons, newest first."""
     try:
-        client = _eval_client(api_key, base_url)
-        result = client.list_evals(
+        client = _compare_client(api_key, base_url)
+        result = client.list_comparisons(
             pipeline_id=pipeline_id,
             collection_id=collection_id,
             limit=limit,
             offset=offset,
         )
         if json_output:
-            click.echo(json.dumps(dataclasses.asdict(result), indent=2))
+            _echo_json(result)
         else:
-            click.echo(f"{result.total} Eval(s):")
-            for evaluation in result.evals:
+            click.echo(f"{result.total} comparison(s):")
+            for comparison in result.comparisons:
                 click.echo(
-                    f"  {evaluation.eval_id}: {evaluation.status} (pipeline {evaluation.pipeline_id})"
+                    f"  {comparison.comparison_id}: {comparison.status} (pipeline {comparison.pipeline_id})"
                 )
     except DatalabError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
 
 
-@eval_group.command("differences")
-@click.argument("eval_id", type=int)
+@click.command("differences")
+@click.argument("comparison_id", type=int)
 @click.argument("file_id", type=int)
-@eval_option_json
-@eval_option_api_key
-@eval_option_base_url
-def eval_differences(
-    eval_id: int, file_id: int, json_output: bool, api_key: Optional[str], base_url: str
+@compare_option_json
+@compare_option_api_key
+@compare_option_base_url
+def compare_differences(
+    comparison_id: int,
+    file_id: int,
+    json_output: bool,
+    api_key: Optional[str],
+    base_url: str,
 ):
-    """[Open beta] Show where an Eval's variants read one document differently."""
+    """[Open beta] Show where a comparison's variants read one document differently."""
     try:
-        client = _eval_client(api_key, base_url)
-        result = client.get_eval_differences(eval_id, file_id)
+        client = _compare_client(api_key, base_url)
+        result = client.get_comparison_differences(comparison_id, file_id)
         if json_output:
-            click.echo(json.dumps(dataclasses.asdict(result), indent=2))
+            _echo_json(result)
         else:
             click.echo(
                 f"File {result.file_id}: variants {', '.join(result.variant_names)}"
@@ -1384,6 +1430,11 @@ def eval_differences(
     except DatalabError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
+
+
+for _command in (compare_run, compare_get, compare_list, compare_differences):
+    compare_group.add_command(_command)
+    eval_group.add_command(_command)
 
 
 # Workflow commands
@@ -1894,6 +1945,7 @@ cli.add_command(fill)
 cli.add_command(form_fields)
 cli.add_command(agent)
 cli.add_command(create_document)
+cli.add_command(compare_group)
 cli.add_command(eval_group)
 cli.add_command(create_workflow)
 cli.add_command(get_workflow)

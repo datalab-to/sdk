@@ -65,15 +65,15 @@ from datalab_sdk.models import (
     PipelineExecutionStepResult,
     CustomProcessor,
     CustomProcessorVersion,
-    Eval,
-    EvalDifference,
-    EvalDifferences,
-    EvalDocumentResult,
-    EvalField,
-    EvalFile,
-    EvalList,
-    EvalVariant,
-    EvalVariantResult,
+    Comparison,
+    ComparisonDifference,
+    ComparisonDifferences,
+    ComparisonDocumentResult,
+    ComparisonField,
+    ComparisonFile,
+    ComparisonList,
+    ComparisonVariant,
+    ComparisonVariantResult,
 )
 from datalab_sdk.settings import settings
 
@@ -216,6 +216,16 @@ _WORKFLOWS_REMOVED_MESSAGE = (
 
 def _warn_workflows_removed() -> None:
     warnings.warn(_WORKFLOWS_REMOVED_MESSAGE, DeprecationWarning, stacklevel=3)
+
+
+def _warn_eval_renamed(old: str, new: str) -> None:
+    """Evals became Comparisons in 0.11.0. The 0.10.0 eval methods still work."""
+    warnings.warn(
+        f"{old}() is deprecated. Use {new}() instead. "
+        "This method will be removed in a future version.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
 
 
 class _AsyncIterableReader:
@@ -2880,24 +2890,24 @@ class AsyncDatalabClient:
             "POST", f"/api/v1/custom_processors/{processor_id}/archive"
         )
 
-    # --- Eval methods ---
+    # --- Comparison methods (open beta; the API may change) ---
 
-    async def create_eval(
+    async def create_comparison(
         self,
         pipeline_id: str,
         *,
         file_ids: Optional[list[int]] = None,
         collection_id: Optional[int] = None,
-        variants: Optional[list[EvalVariant]] = None,
+        variants: Optional[list[ComparisonVariant]] = None,
         version: Optional[int] = None,
-    ) -> Eval:
+    ) -> Comparison:
         """
         Run 2 to 4 variants of a pipeline on the same documents and compare them.
 
         Open beta: the API may change.
 
         Give exactly one of file_ids (uploaded with upload_files()) or
-        collection_id. With no variants, the Eval compares the Fast,
+        collection_id. With no variants, the comparison runs the Fast,
         Balanced and Accurate modes. A variant may change only the mode
         settings: for a pipeline of Convert steps, output_mode and
         merge_cross_page; for a pipeline with one Extract step,
@@ -2907,7 +2917,7 @@ class AsyncDatalabClient:
             pipeline_id: Pipeline ID string (e.g. pl_k8Hx9mP2nQ4v)
             file_ids: Uploaded file IDs to compare (mutually exclusive with collection_id)
             collection_id: Collection whose files to compare (mutually exclusive with file_ids)
-            variants: 2 to 4 EvalVariant objects, each with a different name.
+            variants: 2 to 4 ComparisonVariant objects, each with a different name.
                 Omit to compare the default modes.
             version: Pipeline version to run (0=draft, omit=active)
         """
@@ -2925,37 +2935,39 @@ class AsyncDatalabClient:
         if version is not None:
             payload["version"] = version
         response = await self._make_request(
-            "POST", f"/api/v1/pipelines/{pipeline_id}/evals", json=payload
+            "POST", f"/api/v1/pipelines/{pipeline_id}/comparisons", json=payload
         )
-        return self._build_eval(response)
+        return self._build_comparison(response)
 
-    async def get_eval(self, eval_id: int) -> Eval:
+    async def get_comparison(self, comparison_id: int) -> Comparison:
         """
-        Get an Eval's status, each variant's share of the differences, and each document
+        Get a comparison's status, each variant's share of the differences, and each document
 
         Open beta: the API may change.
 
         Args:
-            eval_id: The Eval's ID
+            comparison_id: The comparison's ID
         """
-        response = await self._make_request("GET", f"/api/v1/evals/{eval_id}")
-        return self._build_eval(response)
+        response = await self._make_request(
+            "GET", f"/api/v1/comparisons/{comparison_id}"
+        )
+        return self._build_comparison(response)
 
-    async def list_evals(
+    async def list_comparisons(
         self,
         pipeline_id: Optional[str] = None,
         collection_id: Optional[int] = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> EvalList:
+    ) -> ComparisonList:
         """
-        List the team's Evals, newest first, without per-document results
+        List the team's comparisons, newest first, without per-document results
 
         Open beta: the API may change.
 
         Args:
-            pipeline_id: Only Evals of this pipeline
-            collection_id: Only Evals of this collection
+            pipeline_id: Only comparisons of this pipeline
+            collection_id: Only comparisons of this collection
             limit: Maximum number to return (default: 20, max: 100)
             offset: Offset for pagination (default: 0)
         """
@@ -2964,35 +2976,40 @@ class AsyncDatalabClient:
             params += f"&pipeline_id={pipeline_id}"
         if collection_id is not None:
             params += f"&collection_id={collection_id}"
-        response = await self._make_request("GET", f"/api/v1/evals?{params}")
-        return EvalList(
-            evals=[self._build_eval(e) for e in response.get("evals", [])],
+        response = await self._make_request("GET", f"/api/v1/comparisons?{params}")
+        return ComparisonList(
+            comparisons=[
+                self._build_comparison(c) for c in response.get("comparisons", [])
+            ],
             total=response.get("total", 0),
         )
 
-    async def get_eval_differences(self, eval_id: int, file_id: int) -> EvalDifferences:
+    async def get_comparison_differences(
+        self, comparison_id: int, file_id: int
+    ) -> ComparisonDifferences:
         """
-        Get where an Eval's variants read one document differently, and which reading
-        matches the page
+        Get where a comparison's variants read one document differently, and which
+        reading matches the page
 
         Open beta: the API may change.
 
         Args:
-            eval_id: The Eval's ID
-            file_id: The file's ID, from get_eval().files
+            comparison_id: The comparison's ID
+            file_id: The file's ID, from get_comparison().files
         """
         response = await self._make_request(
-            "GET", f"/api/v1/evals/{eval_id}/files/{file_id}/differences"
+            "GET",
+            f"/api/v1/comparisons/{comparison_id}/files/{file_id}/differences",
         )
-        return EvalDifferences(
+        return ComparisonDifferences(
             file_id=response.get("file_id", file_id),
             variant_names=response.get("variant_names") or [],
             differences=[
-                self._build_eval_difference(d)
+                self._build_comparison_difference(d)
                 for d in response.get("differences") or []
             ],
             fields=[
-                EvalField(
+                ComparisonField(
                     path=f.get("path", ""),
                     description=f.get("description", ""),
                     values=f.get("values") or [],
@@ -3001,38 +3018,102 @@ class AsyncDatalabClient:
             ],
         )
 
+    async def wait_for_comparison(
+        self,
+        comparison_id: int,
+        *,
+        poll_interval: int = 10,
+        timeout: int = 7200,
+    ) -> Comparison:
+        """
+        Poll get_comparison() until the comparison completes or fails
+
+        Open beta: the API may change.
+
+        Args:
+            comparison_id: The comparison's ID
+            poll_interval: Seconds between polls
+            timeout: Maximum seconds to wait before raising DatalabTimeoutError
+        """
+        slept = 0
+        while True:
+            result = await self.get_comparison(comparison_id)
+            if result.status in ("completed", "failed"):
+                return result
+            if slept >= timeout:
+                raise DatalabTimeoutError(
+                    f"Comparison {comparison_id} did not finish within {timeout} seconds"
+                )
+            await asyncio.sleep(poll_interval)
+            slept += poll_interval
+
+    # --- Deprecated Eval methods (SDK 0.10.0): use the comparison methods ---
+
+    async def create_eval(
+        self,
+        pipeline_id: str,
+        *,
+        file_ids: Optional[list[int]] = None,
+        collection_id: Optional[int] = None,
+        variants: Optional[list[ComparisonVariant]] = None,
+        version: Optional[int] = None,
+    ) -> Comparison:
+        """Deprecated: use create_comparison()."""
+        _warn_eval_renamed("create_eval", "create_comparison")
+        return await self.create_comparison(
+            pipeline_id,
+            file_ids=file_ids,
+            collection_id=collection_id,
+            variants=variants,
+            version=version,
+        )
+
+    async def get_eval(self, eval_id: int) -> Comparison:
+        """Deprecated: use get_comparison()."""
+        _warn_eval_renamed("get_eval", "get_comparison")
+        return await self.get_comparison(eval_id)
+
+    async def list_evals(
+        self,
+        pipeline_id: Optional[str] = None,
+        collection_id: Optional[int] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> ComparisonList:
+        """Deprecated: use list_comparisons()."""
+        _warn_eval_renamed("list_evals", "list_comparisons")
+        return await self.list_comparisons(
+            pipeline_id=pipeline_id,
+            collection_id=collection_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    async def get_eval_differences(
+        self, eval_id: int, file_id: int
+    ) -> ComparisonDifferences:
+        """Deprecated: use get_comparison_differences()."""
+        _warn_eval_renamed("get_eval_differences", "get_comparison_differences")
+        return await self.get_comparison_differences(eval_id, file_id)
+
     async def wait_for_eval(
         self,
         eval_id: int,
         *,
         poll_interval: int = 10,
         timeout: int = 7200,
-    ) -> Eval:
-        """
-        Poll get_eval() until the Eval completes or fails
-
-        Open beta: the API may change.
-
-        Args:
-            eval_id: The Eval's ID
-            poll_interval: Seconds between polls
-            timeout: Maximum seconds to wait before raising DatalabTimeoutError
-        """
-        slept = 0
-        while True:
-            result = await self.get_eval(eval_id)
-            if result.status in ("completed", "failed"):
-                return result
-            if slept >= timeout:
-                raise DatalabTimeoutError(
-                    f"Eval {eval_id} did not finish within {timeout} seconds"
-                )
-            await asyncio.sleep(poll_interval)
-            slept += poll_interval
+    ) -> Comparison:
+        """Deprecated: use wait_for_comparison()."""
+        _warn_eval_renamed("wait_for_eval", "wait_for_comparison")
+        return await self.wait_for_comparison(
+            eval_id, poll_interval=poll_interval, timeout=timeout
+        )
 
     @staticmethod
-    def _build_eval_document_result(data: Dict[str, Any]) -> EvalDocumentResult:
-        return EvalDocumentResult(
+    def _build_comparison_document_result(
+        data: Dict[str, Any],
+    ) -> ComparisonDocumentResult:
+        return ComparisonDocumentResult(
             file_name=data.get("file_name", ""),
             status=data.get("status", ""),
             file_id=data.get("file_id"),
@@ -3045,8 +3126,8 @@ class AsyncDatalabClient:
         )
 
     @staticmethod
-    def _build_eval_file(data: Dict[str, Any]) -> EvalFile:
-        return EvalFile(
+    def _build_comparison_file(data: Dict[str, Any]) -> ComparisonFile:
+        return ComparisonFile(
             file_id=data["file_id"],
             file_name=data.get("file_name", ""),
             comparison=data.get("comparison", "pending"),
@@ -3054,8 +3135,8 @@ class AsyncDatalabClient:
         )
 
     @staticmethod
-    def _build_eval_difference(data: Dict[str, Any]) -> EvalDifference:
-        return EvalDifference(
+    def _build_comparison_difference(data: Dict[str, Any]) -> ComparisonDifference:
+        return ComparisonDifference(
             page=data.get("page", 0),
             before=data.get("before", ""),
             after=data.get("after", ""),
@@ -3070,9 +3151,11 @@ class AsyncDatalabClient:
         )
 
     @classmethod
-    def _build_eval_variant_result(cls, data: Dict[str, Any]) -> EvalVariantResult:
+    def _build_comparison_variant_result(
+        cls, data: Dict[str, Any]
+    ) -> ComparisonVariantResult:
         documents = data.get("documents")
-        return EvalVariantResult(
+        return ComparisonVariantResult(
             name=data.get("name", ""),
             steps=data.get("steps") or {},
             status=data.get("status", ""),
@@ -3088,27 +3171,29 @@ class AsyncDatalabClient:
             undecided=data.get("undecided", 0),
             rate_per_1000_pages_cents=data.get("rate_per_1000_pages_cents"),
             seconds_per_page=data.get("seconds_per_page"),
-            documents=[cls._build_eval_document_result(d) for d in documents]
+            documents=[cls._build_comparison_document_result(d) for d in documents]
             if documents is not None
             else None,
         )
 
     @classmethod
-    def _build_eval(cls, data: Dict[str, Any]) -> Eval:
+    def _build_comparison(cls, data: Dict[str, Any]) -> Comparison:
         files = data.get("files")
-        return Eval(
-            eval_id=data.get("eval_id"),
+        return Comparison(
+            # The deprecated /evals routes answer with eval_id.
+            comparison_id=data.get("comparison_id", data.get("eval_id")),
             pipeline_id=data.get("pipeline_id", ""),
             status=data.get("status", ""),
             variants=[
-                cls._build_eval_variant_result(v) for v in data.get("variants") or []
+                cls._build_comparison_variant_result(v)
+                for v in data.get("variants") or []
             ],
             pipeline_name=data.get("pipeline_name"),
             pipeline_version=data.get("pipeline_version"),
             compared_step=data.get("compared_step", "convert"),
             collection_id=data.get("collection_id"),
             file_ids=data.get("file_ids"),
-            files=[cls._build_eval_file(f) for f in files]
+            files=[cls._build_comparison_file(f) for f in files]
             if files is not None
             else None,
             created=data.get("created"),
@@ -4068,20 +4153,20 @@ class DatalabClient:
             self._async_client.archive_custom_processor(processor_id=processor_id)
         )
 
-    # --- Eval methods (sync) ---
+    # --- Comparison methods (sync; open beta, the API may change) ---
 
-    def create_eval(
+    def create_comparison(
         self,
         pipeline_id: str,
         *,
         file_ids: Optional[list[int]] = None,
         collection_id: Optional[int] = None,
-        variants: Optional[list[EvalVariant]] = None,
+        variants: Optional[list[ComparisonVariant]] = None,
         version: Optional[int] = None,
-    ) -> Eval:
+    ) -> Comparison:
         """Run and compare pipeline variants (sync version). Open beta: the API may change."""
         return self._run_async(
-            self._async_client.create_eval(
+            self._async_client.create_comparison(
                 pipeline_id,
                 file_ids=file_ids,
                 collection_id=collection_id,
@@ -4090,20 +4175,20 @@ class DatalabClient:
             )
         )
 
-    def get_eval(self, eval_id: int) -> Eval:
-        """Get an Eval's status and results (sync version). Open beta: the API may change."""
-        return self._run_async(self._async_client.get_eval(eval_id))
+    def get_comparison(self, comparison_id: int) -> Comparison:
+        """Get a comparison's status and results (sync version). Open beta: the API may change."""
+        return self._run_async(self._async_client.get_comparison(comparison_id))
 
-    def list_evals(
+    def list_comparisons(
         self,
         pipeline_id: Optional[str] = None,
         collection_id: Optional[int] = None,
         limit: int = 20,
         offset: int = 0,
-    ) -> EvalList:
-        """List the team's Evals (sync version). Open beta: the API may change."""
+    ) -> ComparisonList:
+        """List the team's comparisons (sync version). Open beta: the API may change."""
         return self._run_async(
-            self._async_client.list_evals(
+            self._async_client.list_comparisons(
                 pipeline_id=pipeline_id,
                 collection_id=collection_id,
                 limit=limit,
@@ -4111,11 +4196,76 @@ class DatalabClient:
             )
         )
 
-    def get_eval_differences(self, eval_id: int, file_id: int) -> EvalDifferences:
+    def get_comparison_differences(
+        self, comparison_id: int, file_id: int
+    ) -> ComparisonDifferences:
         """Get one document's differences (sync version). Open beta: the API may change."""
         return self._run_async(
-            self._async_client.get_eval_differences(eval_id, file_id)
+            self._async_client.get_comparison_differences(comparison_id, file_id)
         )
+
+    def wait_for_comparison(
+        self,
+        comparison_id: int,
+        *,
+        poll_interval: int = 10,
+        timeout: int = 7200,
+    ) -> Comparison:
+        """Poll until the comparison completes or fails (sync version). Open beta: the API may change."""
+        return self._run_async(
+            self._async_client.wait_for_comparison(
+                comparison_id,
+                poll_interval=poll_interval,
+                timeout=timeout,
+            )
+        )
+
+    # --- Deprecated Eval methods (sync, SDK 0.10.0): use the comparison methods ---
+
+    def create_eval(
+        self,
+        pipeline_id: str,
+        *,
+        file_ids: Optional[list[int]] = None,
+        collection_id: Optional[int] = None,
+        variants: Optional[list[ComparisonVariant]] = None,
+        version: Optional[int] = None,
+    ) -> Comparison:
+        """Deprecated: use create_comparison()."""
+        _warn_eval_renamed("create_eval", "create_comparison")
+        return self.create_comparison(
+            pipeline_id,
+            file_ids=file_ids,
+            collection_id=collection_id,
+            variants=variants,
+            version=version,
+        )
+
+    def get_eval(self, eval_id: int) -> Comparison:
+        """Deprecated: use get_comparison()."""
+        _warn_eval_renamed("get_eval", "get_comparison")
+        return self.get_comparison(eval_id)
+
+    def list_evals(
+        self,
+        pipeline_id: Optional[str] = None,
+        collection_id: Optional[int] = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> ComparisonList:
+        """Deprecated: use list_comparisons()."""
+        _warn_eval_renamed("list_evals", "list_comparisons")
+        return self.list_comparisons(
+            pipeline_id=pipeline_id,
+            collection_id=collection_id,
+            limit=limit,
+            offset=offset,
+        )
+
+    def get_eval_differences(self, eval_id: int, file_id: int) -> ComparisonDifferences:
+        """Deprecated: use get_comparison_differences()."""
+        _warn_eval_renamed("get_eval_differences", "get_comparison_differences")
+        return self.get_comparison_differences(eval_id, file_id)
 
     def wait_for_eval(
         self,
@@ -4123,12 +4273,9 @@ class DatalabClient:
         *,
         poll_interval: int = 10,
         timeout: int = 7200,
-    ) -> Eval:
-        """Poll until the Eval completes or fails (sync version). Open beta: the API may change."""
-        return self._run_async(
-            self._async_client.wait_for_eval(
-                eval_id,
-                poll_interval=poll_interval,
-                timeout=timeout,
-            )
+    ) -> Comparison:
+        """Deprecated: use wait_for_comparison()."""
+        _warn_eval_renamed("wait_for_eval", "wait_for_comparison")
+        return self.wait_for_comparison(
+            eval_id, poll_interval=poll_interval, timeout=timeout
         )

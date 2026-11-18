@@ -1031,12 +1031,13 @@ class CustomProcessorVersion:
     is_active: bool = False
 
 
-# --- Eval models (open beta; the API may change) ---
+# --- Comparison models (open beta; the API may change) ---
+# SDK 0.10.0 named them Eval*. The Eval* names at the end stay as aliases.
 
 
 @dataclass
-class EvalVariant:
-    """One variant that an Eval runs and compares, with its own settings.
+class ComparisonVariant:
+    """One variant that a comparison runs and compares, with its own settings.
 
     `steps` maps a step type ("convert" or "extract") to the settings that
     this variant merges into that step's settings, for example
@@ -1047,13 +1048,13 @@ class EvalVariant:
     steps: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to a dict for the create_eval request body"""
+        """Convert to a dict for the create_comparison request body"""
         return {"name": self.name, "steps": self.steps}
 
 
 @dataclass
-class EvalDocumentResult:
-    """One document's result for one variant of an Eval (open beta).
+class ComparisonDocumentResult:
+    """One document's result for one variant of a comparison (open beta).
 
     `share` is this variant's share of the decided places (won / decided) on
     this document. None until the comparison ends, or when nothing was
@@ -1072,8 +1073,8 @@ class EvalDocumentResult:
 
 
 @dataclass
-class EvalFile:
-    """One file of an Eval, with its comparison status (open beta)."""
+class ComparisonFile:
+    """One file of a comparison, with its comparison status (open beta)."""
 
     file_id: int
     file_name: str
@@ -1084,12 +1085,12 @@ class EvalFile:
 
 
 @dataclass
-class EvalVariantResult:
-    """One variant's settings and result in an Eval (open beta; the API may change).
+class ComparisonVariantResult:
+    """One variant's settings and result in a comparison (open beta; the API may change).
 
     `share` is this variant's share of the decided places (won / decided)
     over the documents compared so far. It is relative to the other
-    variants in the same Eval, not an absolute quality score.
+    variants in the same comparison, not an absolute quality score.
     """
 
     name: str
@@ -1106,7 +1107,7 @@ class EvalVariantResult:
     page_breaks_total: int = 0
     # The scored Convert settings this variant ran with: output_mode and merge_cross_page.
     convert_settings: Dict[str, Any] = field(default_factory=dict)
-    # The scored Extract settings of the variant (extraction_mode), for an Eval of Extract.
+    # The scored Extract settings of the variant (extraction_mode), for a comparison of Extract.
     extract_settings: Dict[str, Any] = field(default_factory=dict)
     # Places where the variants differ but no reading was decided. None when unknown.
     undecided: Optional[int] = 0
@@ -1114,45 +1115,56 @@ class EvalVariantResult:
     # (before any discount), in cents.
     rate_per_1000_pages_cents: Optional[float] = None
     seconds_per_page: Optional[float] = None
-    # Per-document results. Only present on get_eval(), not on create_eval() or list_evals().
-    documents: Optional[List[EvalDocumentResult]] = None
+    # Per-document results. Only present on get_comparison(), not on create_comparison() or
+    # list_comparisons().
+    documents: Optional[List[ComparisonDocumentResult]] = None
 
 
 @dataclass
-class Eval:
-    """Status and results of an Eval that compares pipeline variants (open beta; the API may change)."""
+class Comparison:
+    """Status and results of a comparison of pipeline variants (open beta; the API may change)."""
 
-    eval_id: int
+    comparison_id: int
     pipeline_id: str
     status: str  # running, completed, failed
-    variants: List[EvalVariantResult] = field(default_factory=list)
+    variants: List[ComparisonVariantResult] = field(default_factory=list)
     pipeline_name: Optional[str] = None
     pipeline_version: Optional[int] = None
     # "convert" (the pages) or "extract" (the fields of the pipeline's Extract step)
     compared_step: str = "convert"
     collection_id: Optional[int] = None
     file_ids: Optional[List[int]] = None
-    # The files of the Eval, with names and comparison status. Only on get_eval().
-    files: Optional[List[EvalFile]] = None
+    # The files of the comparison, with names and comparison status. Only on get_comparison().
+    files: Optional[List[ComparisonFile]] = None
     created: Optional[str] = None
 
+    @property
+    def eval_id(self) -> int:
+        """Deprecated: the SDK 0.10.0 name of comparison_id."""
+        return self.comparison_id
+
 
 @dataclass
-class EvalList:
-    """A page of the team's Evals, newest first (open beta; the API may change)."""
+class ComparisonList:
+    """A page of the team's comparisons, newest first (open beta; the API may change)."""
 
-    evals: List[Eval] = field(default_factory=list)
+    comparisons: List[Comparison] = field(default_factory=list)
     total: int = 0
 
+    @property
+    def evals(self) -> List[Comparison]:
+        """Deprecated: the SDK 0.10.0 name of comparisons."""
+        return self.comparisons
+
 
 @dataclass
-class EvalDifference:
-    """One place where an Eval's variants read a document differently (open beta).
+class ComparisonDifference:
+    """One place where a comparison's variants read a document differently (open beta).
 
     `verdict` is "decided", "none", "unclear" or "ignored". `decided_by` is
     "text_layer", "judge", or "" when not decided. For a table difference,
     `question` holds the question about the cell in place of before/after.
-    For an Eval of Extract, `description` is the schema's description of the
+    For a comparison of Extract, `description` is the schema's description of the
     field that `question` names.
     """
 
@@ -1170,10 +1182,10 @@ class EvalDifference:
 
 
 @dataclass
-class EvalField:
-    """An Eval of Extract: one compared field and each variant's value, equal or not (open beta).
+class ComparisonField:
+    """A comparison of Extract: one compared field and each variant's value, equal or not (open beta).
 
-    `values` follows EvalDifferences.variant_names. An empty string means no value.
+    `values` follows ComparisonDifferences.variant_names. An empty string means no value.
     """
 
     path: str
@@ -1182,11 +1194,23 @@ class EvalField:
 
 
 @dataclass
-class EvalDifferences:
-    """Where an Eval's variants read one document differently (open beta; the API may change)."""
+class ComparisonDifferences:
+    """Where a comparison's variants read one document differently (open beta; the API may change)."""
 
     file_id: int
     variant_names: List[str] = field(default_factory=list)
-    differences: List[EvalDifference] = field(default_factory=list)
-    # An Eval of Extract: every compared field with each variant's value. Empty for Convert.
-    fields: List[EvalField] = field(default_factory=list)
+    differences: List[ComparisonDifference] = field(default_factory=list)
+    # A comparison of Extract: every compared field with each variant's value. Empty for Convert.
+    fields: List[ComparisonField] = field(default_factory=list)
+
+
+# Deprecated aliases: the names of SDK 0.10.0. Use the Comparison* names.
+Eval = Comparison
+EvalVariant = ComparisonVariant
+EvalVariantResult = ComparisonVariantResult
+EvalDocumentResult = ComparisonDocumentResult
+EvalFile = ComparisonFile
+EvalList = ComparisonList
+EvalDifference = ComparisonDifference
+EvalDifferences = ComparisonDifferences
+EvalField = ComparisonField
