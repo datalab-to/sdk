@@ -3,6 +3,38 @@
 The newest release is at the top. Each export to this repository uses the
 top section as its commit message.
 
+## 0.12.0
+
+New:
+
+- `FileResult`, the result of a call with `stream_response_to`, now has
+  `request_id`, `page_count`, `parse_quality_score`, `versions`, `runtime`,
+  and `cost_breakdown`. They come from the poll response and are `None` when
+  it does not send them; `request_id` falls back to the submit response. For
+  a result from a signed `result_url`, the poll response has no `versions`,
+  and `runtime` or cost can be unset on an early poll. The saved file can
+  contain `versions` and `runtime`.
+
+Fixed:
+
+- With `stream_response_to`, a result from a signed `result_url` (for example
+  with `processing_location`) lost the cost, page count and quality score,
+  because the download does not contain them. `FileResult` now returns them
+  from the poll response. The download is still copied to disk without
+  parsing.
+- With `stream_response_to`, a connection that dropped while the result
+  streamed ended the call without a retry. The SDK now retries the poll as it
+  does for other poll errors; it does not submit the document again. An error
+  response whose body is cut off or stalls keeps its HTTP status, so a 404
+  still fails at once.
+- With `stream_response_to`, a timeout while the result streamed surfaced as
+  a raw `asyncio.CancelledError`. It now raises `DatalabTimeoutError`. As
+  before, it is not retried: `timeout` limits the whole request, so a result
+  too large to transfer within it would time out again.
+- Without `stream_response_to`, a failed download of a signed `result_url` is
+  now retried on a connection error or HTTP 408, 429 or 5xx, and honors
+  `Retry-After`. A timeout, or an expired URL (HTTP 403), still fails at once.
+
 ## 0.11.0
 
 Comparisons (open beta):

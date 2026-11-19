@@ -161,8 +161,8 @@ Published-agent execution is in open beta; the API may change. Processor design 
 ## Inputs, polling and errors
 
 - Send a local file with `file_path`, or a URL or a `datalab://file-...` reference with `file_url`. When you set `processing_location`, send the document as `file_url`.
-- Processing methods poll until the result is ready. The first 8 seconds poll every 0.3 seconds. Set `max_polls` and `poll_interval` to change the limit (default: 300 polls, 1 second apart). Use `stream_response_to` to write a large result straight to disk.
-- The SDK retries a submission that gets HTTP 429 or 503, and polls that get 408, 429, 5xx or a connection error. It waits for the `Retry-After` header when the API sends one.
+- Processing methods poll until the result is ready. The first 8 seconds poll every 0.3 seconds. Set `max_polls` and `poll_interval` to change the limit (default: 300 polls, 1 second apart). Use `stream_response_to` to write a large result straight to disk. It returns a `FileResult` with the status, `output_path` and, when the poll response sends them, `request_id`, `page_count`, `parse_quality_score`, `versions`, `runtime` and `cost_breakdown`.
+- The SDK retries a submission that gets HTTP 429 or 503, and polls or result downloads that get 408, 429, 5xx or a connection error, including one that happens while a result streams. It waits for the `Retry-After` header when the API sends one.
 - API errors raise `DatalabAPIError` (with `status_code` and `response_data`) or one of its subclasses: `DatalabAuthenticationError` (401, 403), `DatalabPaymentRequiredError` (402), `DatalabNotFoundError` (404), `DatalabRateLimitError` (429) and `DatalabServerError` (5xx). Invalid arguments raise `DatalabValidationError`, which is also a `ValueError`.
 
 With SDK 0.9.0, `upload_files(paths, max_concurrency=5)` streams

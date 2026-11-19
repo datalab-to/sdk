@@ -879,14 +879,31 @@ class ExtractionSchemaSuggestions:
 @dataclass
 class FileResult:
     """Lightweight result returned when stream_response_to is used.
-    The full JSON response is written directly to disk at output_path,
-    never fully loaded into memory."""
+    The full JSON response is written directly to disk at output_path, and
+    the parsed result is never built in memory. While a poll response
+    streams, the SDK decodes each JSON string value whole, so peak memory is
+    at least the size of the largest text field, such as markdown. A result
+    from a signed result_url is copied to disk without parsing.
+
+    The page_count, parse_quality_score, versions, runtime and
+    cost_breakdown fields come from the poll response, and are None when it
+    does not send them. request_id comes from the poll response, or else
+    from the submit response. For a result from a signed result_url, the
+    poll response has no versions, and cost or runtime can be unset on an
+    early poll. The saved file can contain versions and runtime, but not
+    cost."""
 
     success: bool
     status: str
     output_path: Path
     error: Optional[str] = None
     progress_percent: Optional[int] = None
+    request_id: Optional[str] = None
+    page_count: Optional[int] = None
+    parse_quality_score: Optional[float] = None
+    versions: Optional[Union[Dict[str, Any], str]] = None
+    runtime: Optional[float] = None
+    cost_breakdown: Optional[Dict[str, Any]] = None
 
 
 # --- Extraction Schema models ---

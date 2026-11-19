@@ -3,6 +3,8 @@ Datalab API client - async core with sync wrapper
 """
 
 import asyncio
+import dataclasses
+import decimal
 import inspect
 import json as jsonlib
 import mimetypes
@@ -17,6 +19,7 @@ from tenacity import (
     retry,
     retry_if_exception,
     retry_if_exception_type,
+    retry_if_not_exception_type,
     stop_after_attempt,
     wait_exponential_jitter,
 )
@@ -157,6 +160,39 @@ def _is_retryable_poll_error(e: BaseException) -> bool:
     )
 
 
+# Polls are GETs, so a transient failure can be retried without submitting
+# the request again.
+class _TransferTimeoutError(DatalabTimeoutError):
+    """A timeout while a result body transfers. It is not retried: the
+    timeout limits the whole request, so a result too large to transfer
+    within it would time out again on every attempt."""
+
+
+_poll_retry = retry(
+    retry=(
+        (
+            retry_if_exception_type(DatalabTimeoutError)
+            & retry_if_not_exception_type(_TransferTimeoutError)
+        )
+        | retry_if_exception(_is_retryable_poll_error)
+    ),
+    stop=stop_after_attempt(10),
+    wait=_wait_retry_after_or_backoff,
+    reraise=True,
+)
+
+# Top-level fields of a poll response that a streamed call returns on
+# FileResult. A signed result_url download does not contain them.
+_FILE_RESULT_FIELDS = (
+    "request_id",
+    "page_count",
+    "parse_quality_score",
+    "versions",
+    "runtime",
+    "cost_breakdown",
+)
+
+
 def _error_message_from_body(error_data: Any, fallback: str) -> str:
     """Make a readable message from an API error body.
 
@@ -228,19 +264,71 @@ def _warn_eval_renamed(old: str, new: str) -> None:
     )
 
 
-class _AsyncIterableReader:
-    """Adapts an async iterable of bytes into an async file-like object for ijson."""
+def _floats(value: Any) -> Any:
+    """Turn the Decimals that ijson returns for fractions into floats."""
+    if isinstance(value, decimal.Decimal):
+        return float(value)
+    if isinstance(value, dict):
+        return {k: _floats(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_floats(v) for v in value]
+    return value
 
-    def __init__(self, async_iterable):
-        self._iter = async_iterable.__aiter__()
 
-    async def read(self, n=-1):
-        if n == 0:
-            return b""
-        try:
-            return await self._iter.__anext__()
-        except StopAsyncIteration:
-            return b""
+async def _read_error_body(resp: aiohttp.ClientResponse) -> bytes:
+    """Read an error body, or return b"" if it fails.
+
+    The status is already known, so a cut-off or stalled error body must not
+    change whether the error is retried.
+    """
+    try:
+        return await resp.read()
+    except (aiohttp.ClientError, asyncio.TimeoutError):
+        return b""
+
+
+class _StreamedPollFields:
+    """Reads the top-level fields of a streamed poll response from ijson events.
+
+    Only the small fields are kept; the output itself stays on disk.
+    """
+
+    def __init__(self):
+        self.status = None
+        self.success = None
+        self.error = None
+        self.result_url = None
+        self.progress_percent = None
+        self.fields: Dict[str, Any] = {}
+        self._builder = None
+        self._builder_key = None
+
+    def feed(self, events) -> None:
+        for prefix, event, value in events:
+            if self._builder is not None:
+                # Build an object or array field, such as cost_breakdown,
+                # until its closing event.
+                self._builder.event(event, value)
+                if prefix == self._builder_key and event in ("end_map", "end_array"):
+                    self.fields[self._builder_key] = _floats(self._builder.value)
+                    self._builder = None
+            elif prefix in _FILE_RESULT_FIELDS:
+                if event in ("start_map", "start_array"):
+                    self._builder = ijson.ObjectBuilder()
+                    self._builder.event(event, value)
+                    self._builder_key = prefix
+                else:
+                    self.fields[prefix] = _floats(value)
+            elif prefix == "status" and event == "string":
+                self.status = value
+            elif prefix == "success" and event == "boolean":
+                self.success = value
+            elif prefix == "error" and event in ("string", "null"):
+                self.error = value
+            elif prefix == "result_url" and event == "string":
+                self.result_url = value
+            elif prefix == "progress_percent" and event == "number":
+                self.progress_percent = value
 
 
 class AsyncDatalabClient:
@@ -415,15 +503,7 @@ class AsyncDatalabClient:
             f"Polling timed out after {max_polls * poll_interval} seconds"
         )
 
-    @retry(
-        retry=(
-            retry_if_exception_type(DatalabTimeoutError)
-            | retry_if_exception(_is_retryable_poll_error)
-        ),
-        stop=stop_after_attempt(10),
-        wait=_wait_retry_after_or_backoff,
-        reraise=True,
-    )
+    @_poll_retry
     async def _poll_get_with_retry(self, url: str) -> Dict[str, Any]:
         """GET wrapper for polling with scoped retries for transient failures"""
         return await self._make_request("GET", url)
@@ -435,6 +515,7 @@ class AsyncDatalabClient:
             headers={"User-Agent": f"datalab-python-sdk/{settings.VERSION}"},
         )
 
+    @_poll_retry
     async def _fetch_signed_result(self, url: str) -> Dict[str, Any]:
         """Download a result JSON from a signed result_url"""
         try:
@@ -442,24 +523,34 @@ class AsyncDatalabClient:
                 async with session.get(url) as resp:
                     if resp.status >= 400:
                         raise _api_error_from_body(
-                            resp.status, await resp.read(), resp.reason, None
+                            resp.status,
+                            await _read_error_body(resp),
+                            resp.reason,
+                            resp.headers.get("Retry-After"),
                         )
                     return await resp.json(content_type=None)
         except asyncio.TimeoutError:
-            raise DatalabTimeoutError(
+            raise _TransferTimeoutError(
                 f"Result download timed out after {self.timeout} seconds"
             )
         except aiohttp.ClientError as e:
             raise DatalabAPIError(f"Result download failed: {str(e)}")
 
     async def _download_signed_url_to_file(self, url: str, path: Path) -> None:
-        """Stream a signed result_url to a file on disk"""
+        """Stream a signed result_url to a file on disk.
+
+        The bytes are copied without parsing, so the result is never held in
+        memory.
+        """
         try:
             async with self._signed_url_session() as session:
                 async with session.get(url) as resp:
                     if resp.status >= 400:
                         raise _api_error_from_body(
-                            resp.status, await resp.read(), resp.reason, None
+                            resp.status,
+                            await _read_error_body(resp),
+                            resp.reason,
+                            resp.headers.get("Retry-After"),
                         )
                     with open(path, "wb") as f:
                         async for chunk in resp.content.iter_any():
@@ -490,22 +581,7 @@ class AsyncDatalabClient:
         merged.update({k: v for k, v in data.items() if v is not None})
         return merged
 
-    @staticmethod
-    async def _tee_stream_to_file(content, fd):
-        """Async generator that writes each chunk to fd and yields it for ijson."""
-        async for chunk in content.iter_any():
-            os.write(fd, chunk)
-            yield chunk
-
-    @retry(
-        retry=(
-            retry_if_exception_type(DatalabTimeoutError)
-            | retry_if_exception(_is_retryable_poll_error)
-        ),
-        stop=stop_after_attempt(10),
-        wait=_wait_retry_after_or_backoff,
-        reraise=True,
-    )
+    @_poll_retry
     async def _poll_get_streaming(
         self, url: str, stream_response_to: Path
     ) -> FileResult:
@@ -530,33 +606,37 @@ class AsyncDatalabClient:
                 if resp.status >= 400:
                     raise _api_error_from_body(
                         resp.status,
-                        await resp.read(),
+                        await _read_error_body(resp),
                         resp.reason,
                         resp.headers.get("Retry-After"),
                     )
 
-                status = None
-                success = None
-                error = None
-                result_url = None
-                progress_percent = None
-
-                tee_reader = _AsyncIterableReader(
-                    self._tee_stream_to_file(resp.content, fd)
+                # Push each chunk to ijson from this task. ijson.parse_async
+                # reads in another task, which turns an aiohttp timeout into
+                # a CancelledError.
+                poll = _StreamedPollFields()
+                events = ijson.sendable_list()
+                parser = ijson.parse_coro(events)
+                async for chunk in resp.content.iter_any():
+                    os.write(fd, chunk)
+                    parser.send(chunk)
+                    poll.feed(events)
+                    del events[:]
+                parser.close()
+                poll.feed(events)
+            except asyncio.TimeoutError:
+                raise _TransferTimeoutError(
+                    f"Result transfer timed out after {self.timeout} seconds"
                 )
-                async for prefix, event, value in ijson.parse_async(tee_reader):
-                    if prefix == "status" and event == "string":
-                        status = value
-                    elif prefix == "success" and event == "boolean":
-                        success = value
-                    elif prefix == "error" and event in ("string", "null"):
-                        error = value
-                    elif prefix == "result_url" and event == "string":
-                        result_url = value
-                    elif prefix == "progress_percent" and event == "number":
-                        progress_percent = value
+            except aiohttp.ClientError as e:
+                # The body can fail after the headers arrive.
+                raise DatalabAPIError(f"Request failed: {str(e)}") from e
             finally:
                 resp.release()
+
+            status, success, error = poll.status, poll.success, poll.error
+            result_url, progress_percent = poll.result_url, poll.progress_percent
+            fields = poll.fields
 
             if status is None:
                 raise DatalabAPIError("Response missing 'status' field")
@@ -570,27 +650,21 @@ class AsyncDatalabClient:
 
             if status == "complete" and result_url:
                 # The API sent a signed URL instead of the full result.
-                # Stream the full result from that URL into the file.
+                # Stream the full result from that URL into the file. The
+                # FileResult fields come from the poll response only.
                 await self._download_signed_url_to_file(result_url, Path(tmp_path))
 
             if status == "complete":
                 shutil.move(tmp_path, stream_response_to)
                 tmp_path = None
-                return FileResult(
-                    success=success,
-                    status=status,
-                    output_path=stream_response_to,
-                    error=error,
-                    progress_percent=progress_percent,
-                )
-            else:
-                return FileResult(
-                    success=success,
-                    status=status,
-                    output_path=stream_response_to,
-                    error=error,
-                    progress_percent=progress_percent,
-                )
+            return FileResult(
+                success=success,
+                status=status,
+                output_path=stream_response_to,
+                error=error,
+                progress_percent=progress_percent,
+                **fields,
+            )
         finally:
             if fd is not None:
                 try:
@@ -735,6 +809,10 @@ class AsyncDatalabClient:
             for key in ("request_id", "checkpoint_reused"):
                 if result.get(key) is None and initial_data.get(key) is not None:
                     result[key] = initial_data[key]
+        elif isinstance(result, FileResult) and result.request_id is None:
+            result = dataclasses.replace(
+                result, request_id=initial_data.get("request_id")
+            )
         return result
 
     @staticmethod
