@@ -6,9 +6,18 @@ from typing import Any, Optional
 
 
 class DatalabError(Exception):
-    """Base exception for Datalab SDK errors"""
+    """Base exception for Datalab SDK errors.
 
-    pass
+    Attributes:
+        request_id: The request ID, when a document-processing method or
+            get_result() fails after the API accepted the request. Pass
+            check_url to get_result() to fetch the result without submitting
+            the document again. For run_pipeline(), the execution ID.
+        check_url: The URL that returns the request's status and result.
+    """
+
+    request_id: Optional[str] = None
+    check_url: Optional[str] = None
 
 
 class DatalabAPIError(DatalabError):
@@ -68,9 +77,45 @@ class DatalabServerError(DatalabAPIError):
 
 
 class DatalabTimeoutError(DatalabError):
-    """Exception raised when a request times out"""
+    """A request or the polling budget timed out.
 
-    pass
+    When request_id is None, the submission itself timed out, and the API
+    may still have accepted the request. Otherwise the subclass says what
+    happened to the request:
+
+    - DatalabPollingTimeoutError: the request is still running.
+    - DatalabTransferTimeoutError: the result timed out while it downloaded.
+    """
+
+
+class DatalabTransferTimeoutError(DatalabTimeoutError):
+    """The result timed out while it downloaded. The request has finished.
+
+    The SDK does not retry this error: the timeout limits each whole
+    request, so a result too large to download within it would time out
+    again. Raise the client's timeout and call get_result().
+    """
+
+
+class DatalabPollingTimeoutError(DatalabTimeoutError):
+    """The polling budget (max_polls * poll_interval) ran out before the
+    request finished. The request keeps running on the server and is
+    charged; call get_result() to wait for it again.
+
+    Attributes:
+        status: The status of the last poll, for example "processing".
+        progress_percent: The estimated progress of the last poll, if any.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        status: Optional[str] = None,
+        progress_percent: Optional[int] = None,
+    ):
+        super().__init__(message)
+        self.status = status
+        self.progress_percent = progress_percent
 
 
 class DatalabFileError(DatalabError):

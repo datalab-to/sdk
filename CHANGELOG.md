@@ -3,6 +3,37 @@
 The newest release is at the top. Each export to this repository uses the
 top section as its commit message.
 
+## 0.13.0
+
+New:
+
+- `get_result()` fetches the result of a request that was already
+  submitted, without submitting the document again. Pass the check URL, or a
+  request ID and its `endpoint`. It returns the same result type as the
+  method that submitted the request, and accepts `save_output`,
+  `stream_response_to`, `max_polls`, `poll_interval` and `on_progress`.
+- An error that a document-processing method or `get_result()` raises after
+  the API accepted the request has `request_id` and `check_url`. Before, a
+  timeout or failure gave no way to find the running request, which kept
+  running and was charged. For `run_pipeline()`, `request_id` holds the
+  execution ID; resume with `get_pipeline_execution()`.
+- `DatalabPollingTimeoutError`: the polling budget ran out and the request
+  is still running. It has the `status` and `progress_percent` of the last
+  poll.
+- `DatalabTransferTimeoutError`: the request finished, but its result timed
+  out while it downloaded.
+
+Both subclass `DatalabTimeoutError`, so existing `except` clauses still
+catch them.
+
+Fixed:
+
+- With `stream_response_to`, a signed `result_url` download that timed out
+  was retried with the poll, up to 10 polls and 10 downloads, even with
+  `max_polls=1`. With the default timeout, that could take about an hour
+  before an error. It now raises `DatalabTransferTimeoutError` at once, as
+  the call without `stream_response_to` does.
+
 ## 0.12.0
 
 New:

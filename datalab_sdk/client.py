@@ -3,6 +3,7 @@ Datalab API client - async core with sync wrapper
 """
 
 import asyncio
+import contextlib
 import dataclasses
 import decimal
 import inspect
@@ -12,6 +13,7 @@ import os
 import shutil
 import tempfile
 import warnings
+from urllib.parse import urlsplit
 
 import aiohttp
 import ijson
@@ -28,7 +30,10 @@ from typing import Union, Optional, Dict, Any, Callable, Awaitable
 
 from datalab_sdk.exceptions import (
     DatalabAPIError,
+    DatalabError,
+    DatalabPollingTimeoutError,
     DatalabTimeoutError,
+    DatalabTransferTimeoutError,
     DatalabFileError,
     DatalabValidationError,
     api_error_for_status,
@@ -161,18 +166,14 @@ def _is_retryable_poll_error(e: BaseException) -> bool:
 
 
 # Polls are GETs, so a transient failure can be retried without submitting
-# the request again.
-class _TransferTimeoutError(DatalabTimeoutError):
-    """A timeout while a result body transfers. It is not retried: the
-    timeout limits the whole request, so a result too large to transfer
-    within it would time out again on every attempt."""
-
-
+# the request again. A transfer timeout is not retried: the timeout limits
+# the whole request, so a result too large to transfer within it would time
+# out again on every attempt.
 _poll_retry = retry(
     retry=(
         (
             retry_if_exception_type(DatalabTimeoutError)
-            & retry_if_not_exception_type(_TransferTimeoutError)
+            & retry_if_not_exception_type(DatalabTransferTimeoutError)
         )
         | retry_if_exception(_is_retryable_poll_error)
     ),
@@ -180,6 +181,21 @@ _poll_retry = retry(
     wait=_wait_retry_after_or_backoff,
     reraise=True,
 )
+
+
+@contextlib.contextmanager
+def _request_handle(request_id: Optional[str], check_url: Optional[str] = None):
+    """Attach an accepted request to a DatalabError raised inside the block,
+    so the caller can resume it instead of submitting again."""
+    try:
+        yield
+    except DatalabError as e:
+        if e.request_id is None:
+            e.request_id = request_id
+        if e.check_url is None:
+            e.check_url = check_url
+        raise
+
 
 # Top-level fields of a poll response that a streamed call returns on
 # FileResult. A signed result_url download does not contain them.
@@ -331,6 +347,43 @@ class _StreamedPollFields:
                 self.progress_percent = value
 
 
+def _save_to(result: Any, save_output: Union[str, Path]) -> None:
+    output_path = Path(save_output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    result.save_output(output_path)
+
+
+def _save_successful(result: Any, save_output: Optional[Union[str, Path]]) -> None:
+    if save_output and result.success:
+        _save_to(result, save_output)
+
+
+def _save_successful_document(
+    result: Any, save_output: Optional[Union[str, Path]]
+) -> None:
+    if save_output and result.success and result.output_base64:
+        _save_to(result, save_output)
+
+
+def _save_redacted_document(
+    result: RedactResult, save_output: Optional[Union[str, Path]]
+) -> None:
+    # A redacted PDF is saved even when verification failed; see redact().
+    if save_output and result.output_base64:
+        _save_to(result, save_output)
+
+
+@dataclasses.dataclass(frozen=True)
+class _ResultPolicy:
+    """How one endpoint's poll response becomes its result. The processing
+    methods and get_result() share it through AsyncDatalabClient._finish()."""
+
+    build: Callable[..., Any]
+    save: Callable[[Any, Optional[Union[str, Path]]], None]
+    result_transform: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None
+    streamable: bool = True
+
+
 class AsyncDatalabClient:
     """Asynchronous client for Datalab API"""
 
@@ -462,6 +515,7 @@ class AsyncDatalabClient:
         fast_until = loop.time() + FAST_POLL_SECONDS if 0 < poll_interval <= 1 else 0.0
         budget = max_polls * poll_interval
         slept = 0.0
+        status = percent = None
         for i in range(max_polls if poll_interval <= 0 else _MAX_POLL_REQUESTS):
             if stream_response_to:
                 result = await self._poll_get_streaming(full_url, stream_response_to)
@@ -499,8 +553,11 @@ class AsyncDatalabClient:
             await asyncio.sleep(delay)
             slept += delay
 
-        raise DatalabTimeoutError(
-            f"Polling timed out after {max_polls * poll_interval} seconds"
+        raise DatalabPollingTimeoutError(
+            f"Polling timed out after {max_polls * poll_interval} seconds. "
+            "The request is still running; call get_result() to keep waiting.",
+            status=status,
+            progress_percent=percent if type(percent) is int else None,
         )
 
     @_poll_retry
@@ -530,7 +587,7 @@ class AsyncDatalabClient:
                         )
                     return await resp.json(content_type=None)
         except asyncio.TimeoutError:
-            raise _TransferTimeoutError(
+            raise DatalabTransferTimeoutError(
                 f"Result download timed out after {self.timeout} seconds"
             )
         except aiohttp.ClientError as e:
@@ -540,7 +597,9 @@ class AsyncDatalabClient:
         """Stream a signed result_url to a file on disk.
 
         The bytes are copied without parsing, so the result is never held in
-        memory.
+        memory. It runs inside _poll_get_streaming, so a 5xx or connection
+        error retries the poll and the download on purpose: each retry gets
+        a fresh signed URL.
         """
         try:
             async with self._signed_url_session() as session:
@@ -556,7 +615,10 @@ class AsyncDatalabClient:
                         async for chunk in resp.content.iter_any():
                             f.write(chunk)
         except asyncio.TimeoutError:
-            raise DatalabTimeoutError(
+            # Not retried: the request has finished, and the same download
+            # would time out again. Retrying it here also retried the poll,
+            # because _poll_get_streaming retries every other timeout.
+            raise DatalabTransferTimeoutError(
                 f"Result download timed out after {self.timeout} seconds"
             )
         except aiohttp.ClientError as e:
@@ -625,8 +687,16 @@ class AsyncDatalabClient:
                 parser.close()
                 poll.feed(events)
             except asyncio.TimeoutError:
-                raise _TransferTimeoutError(
-                    f"Result transfer timed out after {self.timeout} seconds"
+                # The API sends status near the start of the body. A finished
+                # result that times out would time out again, so it is not
+                # retried. Any other body is small, so its timeout is retried
+                # like any poll timeout.
+                if poll.status == "complete":
+                    raise DatalabTransferTimeoutError(
+                        f"Result transfer timed out after {self.timeout} seconds"
+                    )
+                raise DatalabTimeoutError(
+                    f"Request timed out after {self.timeout} seconds"
                 )
             except aiohttp.ClientError as e:
                 # The body can fail after the headers arrive.
@@ -734,8 +804,9 @@ class AsyncDatalabClient:
 
         return form_data
 
+    @staticmethod
     def _build_conversion_result(
-        self, result_data: Dict[str, Any], default_format: str = "markdown"
+        result_data: Dict[str, Any], default_format: str = "markdown"
     ) -> ConversionResult:
         """Build a ConversionResult from API response data"""
         return ConversionResult(
@@ -769,6 +840,122 @@ class AsyncDatalabClient:
             progress_percent=result_data.get("progress_percent"),
         )
 
+    @staticmethod
+    def _build_agent_result(result_data: Dict[str, Any]) -> AgentResult:
+        return AgentResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            output_shape=result_data.get("output_shape"),
+            finished=result_data.get("finished"),
+            turns=result_data.get("turns"),
+            markdown=result_data.get("markdown"),
+            html=result_data.get("html"),
+            json=result_data.get("json"),
+            chunks=result_data.get("chunks"),
+            extraction_schema_json=result_data.get("extraction_schema_json"),
+            segments=result_data.get("segments"),
+            metadata=result_data.get("metadata"),
+            verdict=result_data.get("verdict"),
+            jats_xml=result_data.get("jats_xml"),
+            accessible_pdf=result_data.get("accessible_pdf"),
+            images=result_data.get("images"),
+            verifier_metrics=result_data.get("verifier_metrics"),
+            page_count=result_data.get("page_count"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            parse_quality_score=result_data.get("parse_quality_score"),
+            runtime=result_data.get("runtime"),
+            versions=result_data.get("versions"),
+            request_id=result_data.get("request_id"),
+            result_url=result_data.get("result_url"),
+            expires_in=result_data.get("expires_in"),
+            progress_percent=result_data.get("progress_percent"),
+        )
+
+    @staticmethod
+    def _build_create_document_result(
+        result_data: Dict[str, Any],
+    ) -> CreateDocumentResult:
+        return CreateDocumentResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            output_format=result_data.get("output_format"),
+            output_base64=result_data.get("output_base64"),
+            runtime=result_data.get("runtime"),
+            page_count=result_data.get("page_count"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            versions=result_data.get("versions"),
+            request_id=result_data.get("request_id"),
+            result_url=result_data.get("result_url"),
+            expires_in=result_data.get("expires_in"),
+            progress_percent=result_data.get("progress_percent"),
+        )
+
+    @staticmethod
+    def _build_ocr_result(result_data: Dict[str, Any]) -> OCRResult:
+        return OCRResult(
+            success=result_data.get("success", False),
+            pages=result_data.get("pages", []),
+            error=result_data.get("error"),
+            page_count=result_data.get("page_count"),
+            status=result_data.get("status", "complete"),
+            versions=result_data.get("versions"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            request_id=result_data.get("request_id"),
+            progress_percent=result_data.get("progress_percent"),
+        )
+
+    @staticmethod
+    def _build_form_filling_result(result_data: Dict[str, Any]) -> FormFillingResult:
+        return FormFillingResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            error_in=result_data.get("error_in"),
+            output_format=result_data.get("output_format"),
+            output_base64=result_data.get("output_base64"),
+            fields_filled=result_data.get("fields_filled"),
+            fields_not_found=result_data.get("fields_not_found"),
+            runtime=result_data.get("runtime"),
+            page_count=result_data.get("page_count"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            versions=result_data.get("versions"),
+            request_id=result_data.get("request_id"),
+            result_url=result_data.get("result_url"),
+            expires_in=result_data.get("expires_in"),
+            progress_percent=result_data.get("progress_percent"),
+        )
+
+    @staticmethod
+    def _build_form_fields_result(result_data: Dict[str, Any]) -> FormFieldsResult:
+        return FormFieldsResult(
+            status=result_data.get("status", "complete"),
+            success=result_data.get("success"),
+            error=result_data.get("error"),
+            pages=result_data.get("pages"),
+            json=result_data.get("json"),
+            text_error=result_data.get("text_error"),
+            page_count=result_data.get("page_count"),
+            cost_breakdown=result_data.get("cost_breakdown"),
+            runtime=result_data.get("runtime"),
+            versions=result_data.get("versions"),
+            request_id=result_data.get("request_id"),
+            result_url=result_data.get("result_url"),
+            expires_in=result_data.get("expires_in"),
+            progress_percent=result_data.get("progress_percent"),
+        )
+
+    @staticmethod
+    def _build_redact_result(result_data: Dict[str, Any]) -> RedactResult:
+        return RedactResult(
+            **{
+                key: value
+                for key, value in result_data.items()
+                if key in RedactResult.__dataclass_fields__
+            }
+        )
+
     async def _submit_and_poll(
         self,
         endpoint: str,
@@ -792,27 +979,66 @@ class AsyncDatalabClient:
                 f"Request failed: {initial_data.get('error', 'Unknown error')}"
             )
 
-        result = await self._poll_result(
+        result = await self._poll_request(
             initial_data["request_check_url"],
+            initial_data.get("request_id"),
             max_polls=max_polls,
             poll_interval=poll_interval,
             on_progress=on_progress,
             stream_response_to=stream_response_to,
-            **(
-                {"result_transform": result_transform}
-                if result_transform is not None
-                else {}
-            ),
+            result_transform=result_transform,
         )
-        if isinstance(result, dict):
-            result = dict(result)
-            for key in ("request_id", "checkpoint_reused"):
-                if result.get(key) is None and initial_data.get(key) is not None:
-                    result[key] = initial_data[key]
-        elif isinstance(result, FileResult) and result.request_id is None:
-            result = dataclasses.replace(
-                result, request_id=initial_data.get("request_id")
-            )
+        # Only the submission response says whether a checkpoint was reused.
+        if (
+            isinstance(result, dict)
+            and result.get("checkpoint_reused") is None
+            and initial_data.get("checkpoint_reused") is not None
+        ):
+            result = {**result, "checkpoint_reused": initial_data["checkpoint_reused"]}
+        return result
+
+    async def _poll_request(
+        self,
+        check_url: str,
+        request_id: Optional[str],
+        result_transform: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
+        **poll_kwargs,
+    ) -> Union[Dict[str, Any], FileResult]:
+        """Poll a request the API accepted.
+
+        A DatalabError gets the request_id and check_url, so the caller can
+        resume with get_result(). The result gets request_id when the poll
+        response does not send it.
+        """
+        if result_transform is not None:
+            poll_kwargs["result_transform"] = result_transform
+        with _request_handle(request_id, check_url):
+            result = await self._poll_result(check_url, **poll_kwargs)
+        if request_id is None:
+            return result
+        if isinstance(result, FileResult):
+            if result.request_id is None:
+                result = dataclasses.replace(result, request_id=request_id)
+        elif result.get("request_id") is None:
+            result = {**result, "request_id": request_id}
+        return result
+
+    def _finish(
+        self,
+        policy: _ResultPolicy,
+        result_data: Union[Dict[str, Any], FileResult],
+        save_output: Optional[Union[str, Path]],
+        **build_kwargs,
+    ) -> Any:
+        """Build an endpoint's result from its poll response and save it.
+
+        The processing methods and get_result() share it, so a resumed
+        request returns the same result as the method that submitted it.
+        """
+        if isinstance(result_data, FileResult):
+            return result_data
+        result = policy.build(result_data, **build_kwargs)
+        policy.save(result, save_output)
         return result
 
     @staticmethod
@@ -831,13 +1057,6 @@ class AsyncDatalabClient:
         if not resolved.parent.is_dir():
             raise DatalabValidationError(f"Directory does not exist: {resolved.parent}")
         return resolved
-
-    @staticmethod
-    def _save_if_requested(result, save_output, has_output: bool = True) -> None:
-        if save_output and result.success and has_output:
-            output_path = Path(save_output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            result.save_output(output_path)
 
     @staticmethod
     def _check_file_or_checkpoint(file_path, file_url, checkpoint_id) -> None:
@@ -896,12 +1115,9 @@ class AsyncDatalabClient:
             stream_response_to=resolved_stream_response_to,
         )
 
-        if isinstance(result_data, FileResult):
-            return result_data
-
-        result = self._build_conversion_result(result_data, options.output_format)
-        self._save_if_requested(result, save_output)
-        return result
+        return self._finish(
+            _CONVERSION, result_data, save_output, default_format=options.output_format
+        )
 
     async def extract(
         self,
@@ -971,12 +1187,9 @@ class AsyncDatalabClient:
             stream_response_to=resolved_stream_response_to,
         )
 
-        if isinstance(result_data, FileResult):
-            return result_data
-
-        result = self._build_conversion_result(result_data, options.output_format)
-        self._save_if_requested(result, save_output)
-        return result
+        return self._finish(
+            _CONVERSION, result_data, save_output, default_format=options.output_format
+        )
 
     async def segment(
         self,
@@ -1030,12 +1243,7 @@ class AsyncDatalabClient:
             stream_response_to=resolved_stream_response_to,
         )
 
-        if isinstance(result_data, FileResult):
-            return result_data
-
-        result = self._build_conversion_result(result_data, "markdown")
-        self._save_if_requested(result, save_output)
-        return result
+        return self._finish(_CONVERSION, result_data, save_output)
 
     async def run_agent(
         self,
@@ -1083,40 +1291,7 @@ class AsyncDatalabClient:
             stream_response_to=resolved_stream_response_to,
         )
 
-        if isinstance(result_data, FileResult):
-            return result_data
-
-        result = AgentResult(
-            status=result_data.get("status", "complete"),
-            success=result_data.get("success"),
-            error=result_data.get("error"),
-            output_shape=result_data.get("output_shape"),
-            finished=result_data.get("finished"),
-            turns=result_data.get("turns"),
-            markdown=result_data.get("markdown"),
-            html=result_data.get("html"),
-            json=result_data.get("json"),
-            chunks=result_data.get("chunks"),
-            extraction_schema_json=result_data.get("extraction_schema_json"),
-            segments=result_data.get("segments"),
-            metadata=result_data.get("metadata"),
-            verdict=result_data.get("verdict"),
-            jats_xml=result_data.get("jats_xml"),
-            accessible_pdf=result_data.get("accessible_pdf"),
-            images=result_data.get("images"),
-            verifier_metrics=result_data.get("verifier_metrics"),
-            page_count=result_data.get("page_count"),
-            cost_breakdown=result_data.get("cost_breakdown"),
-            parse_quality_score=result_data.get("parse_quality_score"),
-            runtime=result_data.get("runtime"),
-            versions=result_data.get("versions"),
-            request_id=result_data.get("request_id"),
-            result_url=result_data.get("result_url"),
-            expires_in=result_data.get("expires_in"),
-            progress_percent=result_data.get("progress_percent"),
-        )
-        self._save_if_requested(result, save_output)
-        return result
+        return self._finish(_AGENT, result_data, save_output)
 
     async def run_custom_processor(
         self,
@@ -1191,12 +1366,9 @@ class AsyncDatalabClient:
             stream_response_to=resolved_stream_response_to,
         )
 
-        if isinstance(result_data, FileResult):
-            return result_data
-
-        result = self._build_conversion_result(result_data, options.output_format)
-        self._save_if_requested(result, save_output)
-        return result
+        return self._finish(
+            _CONVERSION, result_data, save_output, default_format=options.output_format
+        )
 
     async def run_custom_pipeline(
         self,
@@ -1273,12 +1445,9 @@ class AsyncDatalabClient:
             stream_response_to=resolved_stream_response_to,
         )
 
-        if isinstance(result_data, FileResult):
-            return result_data
-
-        result = self._build_conversion_result(result_data, options.output_format)
-        self._save_if_requested(result, save_output)
-        return result
+        return self._finish(
+            _CONVERSION, result_data, save_output, default_format=options.output_format
+        )
 
     async def create_document(
         self,
@@ -1333,26 +1502,7 @@ class AsyncDatalabClient:
             stream_response_to=resolved_stream_response_to,
         )
 
-        if isinstance(result_data, FileResult):
-            return result_data
-
-        result = CreateDocumentResult(
-            status=result_data.get("status", "complete"),
-            success=result_data.get("success"),
-            error=result_data.get("error"),
-            output_format=result_data.get("output_format"),
-            output_base64=result_data.get("output_base64"),
-            runtime=result_data.get("runtime"),
-            page_count=result_data.get("page_count"),
-            cost_breakdown=result_data.get("cost_breakdown"),
-            versions=result_data.get("versions"),
-            request_id=result_data.get("request_id"),
-            result_url=result_data.get("result_url"),
-            expires_in=result_data.get("expires_in"),
-            progress_percent=result_data.get("progress_percent"),
-        )
-        self._save_if_requested(result, save_output, bool(result.output_base64))
-        return result
+        return self._finish(_CREATE_DOCUMENT, result_data, save_output)
 
     async def ocr(
         self,
@@ -1391,22 +1541,7 @@ class AsyncDatalabClient:
             stream_response_to=resolved_stream_response_to,
         )
 
-        if isinstance(result_data, FileResult):
-            return result_data
-
-        result = OCRResult(
-            success=result_data.get("success", False),
-            pages=result_data.get("pages", []),
-            error=result_data.get("error"),
-            page_count=result_data.get("page_count"),
-            status=result_data.get("status", "complete"),
-            versions=result_data.get("versions"),
-            cost_breakdown=result_data.get("cost_breakdown"),
-            request_id=result_data.get("request_id"),
-            progress_percent=result_data.get("progress_percent"),
-        )
-        self._save_if_requested(result, save_output)
-        return result
+        return self._finish(_OCR, result_data, save_output)
 
     @staticmethod
     def _normalize_redaction_result(data: Dict[str, Any]) -> Dict[str, Any]:
@@ -1486,21 +1621,10 @@ class AsyncDatalabClient:
             ),
             max_polls=max_polls,
             poll_interval=poll_interval,
-            result_transform=self._normalize_redaction_result,
+            result_transform=_REDACT.result_transform,
             on_progress=on_progress,
         )
-        result = RedactResult(
-            **{
-                key: value
-                for key, value in result_data.items()
-                if key in RedactResult.__dataclass_fields__
-            }
-        )
-        if save_output and result.output_base64:
-            output_path = Path(save_output)
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            result.save_output(output_path)
-        return result
+        return self._finish(_REDACT, result_data, save_output)
 
     async def get_redaction_presets(self) -> Dict[str, Any]:
         """Get built-in redaction preset IDs, labels, and specifications."""
@@ -1548,29 +1672,7 @@ class AsyncDatalabClient:
             stream_response_to=resolved_stream_response_to,
         )
 
-        if isinstance(result_data, FileResult):
-            return result_data
-
-        result = FormFillingResult(
-            status=result_data.get("status", "complete"),
-            success=result_data.get("success"),
-            error=result_data.get("error"),
-            error_in=result_data.get("error_in"),
-            output_format=result_data.get("output_format"),
-            output_base64=result_data.get("output_base64"),
-            fields_filled=result_data.get("fields_filled"),
-            fields_not_found=result_data.get("fields_not_found"),
-            runtime=result_data.get("runtime"),
-            page_count=result_data.get("page_count"),
-            cost_breakdown=result_data.get("cost_breakdown"),
-            versions=result_data.get("versions"),
-            request_id=result_data.get("request_id"),
-            result_url=result_data.get("result_url"),
-            expires_in=result_data.get("expires_in"),
-            progress_percent=result_data.get("progress_percent"),
-        )
-        self._save_if_requested(result, save_output, bool(result.output_base64))
-        return result
+        return self._finish(_FORM_FILLING, result_data, save_output)
 
     async def form_fields(
         self,
@@ -1618,27 +1720,7 @@ class AsyncDatalabClient:
             stream_response_to=resolved_stream_response_to,
         )
 
-        if isinstance(result_data, FileResult):
-            return result_data
-
-        result = FormFieldsResult(
-            status=result_data.get("status", "complete"),
-            success=result_data.get("success"),
-            error=result_data.get("error"),
-            pages=result_data.get("pages"),
-            json=result_data.get("json"),
-            text_error=result_data.get("text_error"),
-            page_count=result_data.get("page_count"),
-            cost_breakdown=result_data.get("cost_breakdown"),
-            runtime=result_data.get("runtime"),
-            versions=result_data.get("versions"),
-            request_id=result_data.get("request_id"),
-            result_url=result_data.get("result_url"),
-            expires_in=result_data.get("expires_in"),
-            progress_percent=result_data.get("progress_percent"),
-        )
-        self._save_if_requested(result, save_output)
-        return result
+        return self._finish(_FORM_FIELDS, result_data, save_output)
 
     async def generate_extraction_schemas(
         self,
@@ -1681,6 +1763,91 @@ class AsyncDatalabClient:
             page_count=result_data.get("page_count"),
             request_id=result_data.get("request_id"),
         )
+
+    async def get_result(
+        self,
+        request_id_or_check_url: str,
+        endpoint: Optional[str] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
+    ) -> Union[
+        ConversionResult,
+        AgentResult,
+        CreateDocumentResult,
+        FormFillingResult,
+        FormFieldsResult,
+        OCRResult,
+        RedactResult,
+        FileResult,
+    ]:
+        """
+        Wait for the result of a request that was already submitted
+
+        Use it after a DatalabTimeoutError or another error that has a
+        request_id: it polls the same request again, so the document is not
+        submitted or charged a second time. It returns the same result type
+        as the method that submitted the request. A check URL does not carry
+        the output_format you asked for, so if the response omits it, a
+        conversion result has output_format "markdown".
+
+        Args:
+            request_id_or_check_url: The error's check_url, or a request ID.
+                A check URL names its endpoint. Only its path is used; the
+                request goes to this client's base_url.
+            endpoint: With a request ID, the endpoint that received the
+                request, for example "convert", "extract" or "agent".
+            save_output: Optional path to save output files
+            stream_response_to: Optional path to stream raw JSON response to disk
+            max_polls: Maximum number of polling attempts
+            poll_interval: Seconds between polling attempts
+            on_progress: Optional callback for increasing estimated percentages (0-100).
+        """
+        value = request_id_or_check_url.strip()
+        if "/" in value:
+            if endpoint is not None:
+                raise DatalabValidationError(
+                    "Pass endpoint only with a request ID; a check URL names its endpoint."
+                )
+            path = urlsplit(value).path.rstrip("/")
+            prefix, _, request_id = path.rpartition("/")
+            _, found, route = prefix.partition("/api/v1/")
+            if not found or not request_id:
+                raise DatalabValidationError(f"Not a request check URL: {value}")
+        else:
+            if endpoint is None:
+                raise DatalabValidationError(
+                    "Pass endpoint with a request ID, or pass the check URL instead."
+                )
+            request_id, route = value, endpoint.strip("/")
+        policy = _RESULT_ROUTES.get(route)
+        if policy is None or not request_id:
+            raise DatalabValidationError(
+                f"get_result() does not support the {route!r} endpoint. "
+                f"Supported: {', '.join(sorted(_RESULT_ROUTES))}."
+            )
+        if not policy.streamable and stream_response_to:
+            raise DatalabValidationError(
+                f"{route} results cannot use stream_response_to."
+            )
+        resolved_stream_response_to = self._resolve_stream_path(
+            save_output, stream_response_to
+        )
+
+        result_data = await self._poll_request(
+            f"{self.base_url}/api/v1/{route}/{request_id}",
+            request_id,
+            max_polls=max_polls,
+            poll_interval=poll_interval,
+            stream_response_to=resolved_stream_response_to,
+            on_progress=on_progress,
+            result_transform=policy.result_transform,
+        )
+        # A check URL does not carry the output_format the caller asked for,
+        # so a conversion result whose response omits it says "markdown".
+        return self._finish(policy, result_data, save_output)
 
     async def delete_result(self, request_id: str) -> Dict[str, Any]:
         """
@@ -2740,12 +2907,15 @@ class AsyncDatalabClient:
             async def forward_progress(percent: int) -> None:
                 await progress.report(percent, complete=percent == 100)
 
-            return await self.get_pipeline_execution(
-                execution.execution_id,
-                max_polls=max_polls - 1,
-                poll_interval=poll_interval,
-                on_progress=forward_progress,
-            )
+            # The run was accepted and is charged. An error carries the
+            # execution ID as request_id, for get_pipeline_execution().
+            with _request_handle(execution.execution_id):
+                return await self.get_pipeline_execution(
+                    execution.execution_id,
+                    max_polls=max_polls - 1,
+                    poll_interval=poll_interval,
+                    on_progress=forward_progress,
+                )
         return execution
 
     async def get_pipeline_execution(
@@ -3278,6 +3448,50 @@ class AsyncDatalabClient:
         )
 
 
+_CONVERSION = _ResultPolicy(
+    AsyncDatalabClient._build_conversion_result, _save_successful
+)
+_AGENT = _ResultPolicy(AsyncDatalabClient._build_agent_result, _save_successful)
+_CREATE_DOCUMENT = _ResultPolicy(
+    AsyncDatalabClient._build_create_document_result, _save_successful_document
+)
+_FORM_FILLING = _ResultPolicy(
+    AsyncDatalabClient._build_form_filling_result, _save_successful_document
+)
+_FORM_FIELDS = _ResultPolicy(
+    AsyncDatalabClient._build_form_fields_result, _save_successful
+)
+_OCR = _ResultPolicy(AsyncDatalabClient._build_ocr_result, _save_successful)
+_REDACT = _ResultPolicy(
+    AsyncDatalabClient._build_redact_result,
+    _save_redacted_document,
+    result_transform=AsyncDatalabClient._normalize_redaction_result,
+    streamable=False,
+)
+
+# The result routes that get_result() accepts, by the path between /api/v1/
+# and the request ID. Each route returns its own response shape, so the route
+# sets the result policy. "marker" and its subpaths are the older routes that
+# some check URLs still use.
+_RESULT_ROUTES = {
+    "convert": _CONVERSION,
+    "extract": _CONVERSION,
+    "segment": _CONVERSION,
+    "track-changes": _CONVERSION,
+    "custom-processor": _CONVERSION,
+    "custom-pipeline": _CONVERSION,
+    "marker": _CONVERSION,
+    "marker/extraction": _CONVERSION,
+    "marker/segmentation": _CONVERSION,
+    "agent": _AGENT,
+    "create-document": _CREATE_DOCUMENT,
+    "fill": _FORM_FILLING,
+    "form-fields": _FORM_FIELDS,
+    "ocr": _OCR,
+    "redact": _REDACT,
+}
+
+
 class DatalabClient:
     """Synchronous wrapper around AsyncDatalabClient"""
 
@@ -3749,6 +3963,41 @@ class DatalabClient:
                 processing_location=processing_location,
                 max_polls=max_polls,
                 poll_interval=poll_interval,
+            )
+        )
+
+    def get_result(
+        self,
+        request_id_or_check_url: str,
+        endpoint: Optional[str] = None,
+        save_output: Optional[Union[str, Path]] = None,
+        stream_response_to: Optional[Union[str, Path]] = None,
+        max_polls: int = 300,
+        poll_interval: int = 1,
+        on_progress: Optional[ProgressCallback] = None,
+    ) -> Union[
+        ConversionResult,
+        AgentResult,
+        CreateDocumentResult,
+        FormFillingResult,
+        FormFieldsResult,
+        OCRResult,
+        RedactResult,
+        FileResult,
+    ]:
+        """Wait for the result of a request that was already submitted (sync version).
+
+        See AsyncDatalabClient.get_result().
+        """
+        return self._run_async(
+            self._async_client.get_result(
+                request_id_or_check_url,
+                endpoint=endpoint,
+                save_output=save_output,
+                stream_response_to=stream_response_to,
+                max_polls=max_polls,
+                poll_interval=poll_interval,
+                on_progress=on_progress,
             )
         )
 

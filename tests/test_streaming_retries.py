@@ -348,6 +348,102 @@ async def test_stream_body_timeout_is_not_retried(tmp_path, monkeypatch):
     assert list(tmp_path.iterdir()) == []
 
 
+@pytest.mark.asyncio
+async def test_stalled_processing_body_is_retried(tmp_path, monkeypatch):
+    """A body that stalls before the request is complete is an ordinary poll
+    timeout: the request has not finished, so the SDK polls again."""
+    monkeypatch.setattr(client_module.tempfile, "tempdir", str(tmp_path))
+    destination = tmp_path / "result.json"
+    counts = {"polls": 0}
+    complete = {"status": "complete", "success": True, "markdown": "full result"}
+
+    async def submit(request):
+        await request.read()
+        return web.json_response(
+            {"success": True, "request_id": "local", "request_check_url": "/check"}
+        )
+
+    async def result(request):
+        counts["polls"] += 1
+        if counts["polls"] == 1:
+            response = web.StreamResponse(
+                headers={"Content-Type": "application/json", "Content-Length": "1000"}
+            )
+            await response.prepare(request)
+            await response.write(b'{"status":"processing","progress_percent":')
+            await asyncio.sleep(2)
+            return response
+        return web.json_response(complete)
+
+    app = web.Application()
+    app.router.add_post("/api/v1/convert", submit)
+    app.router.add_get("/check", result)
+    async with TestServer(app) as server:
+        async with AsyncDatalabClient(
+            api_key="local-test-only", base_url=str(server.make_url("")), timeout=0.5
+        ) as client:
+            result = await client.convert(
+                file_url="https://example.invalid/local.pdf",
+                stream_response_to=destination,
+                max_polls=1,
+                poll_interval=0,
+            )
+    assert result.success
+    assert counts["polls"] == 2
+    assert json.loads(destination.read_text()) == complete
+
+
+@pytest.mark.asyncio
+async def test_stalled_inline_result_is_retried_as_a_poll_timeout(monkeypatch):
+    """Without stream_response_to, the SDK reads the whole poll body before it
+    sees status, so a body timeout is an ordinary poll timeout and is retried,
+    even when the result had finished. This is a known gap: a finished inline
+    result too large to read within timeout is read up to 10 times. It is not
+    a DatalabTransferTimeoutError, which means the request finished."""
+    counts = {"polls": 0}
+    complete = {"status": "complete", "success": True, "markdown": "full result"}
+    retry_errors = []
+    monkeypatch.setattr(
+        AsyncDatalabClient._poll_get_with_retry.retry,
+        "before_sleep",
+        lambda state: retry_errors.append(state.outcome.exception()),
+    )
+
+    async def submit(request):
+        await request.read()
+        return web.json_response(
+            {"success": True, "request_id": "local", "request_check_url": "/check"}
+        )
+
+    async def result(request):
+        counts["polls"] += 1
+        if counts["polls"] == 1:
+            response = web.StreamResponse(
+                headers={"Content-Type": "application/json", "Content-Length": "1000"}
+            )
+            await response.prepare(request)
+            await response.write(b'{"status":"complete","success":true,"markdown":"')
+            await asyncio.sleep(2)
+            return response
+        return web.json_response(complete)
+
+    app = web.Application()
+    app.router.add_post("/api/v1/convert", submit)
+    app.router.add_get("/check", result)
+    async with TestServer(app) as server:
+        async with AsyncDatalabClient(
+            api_key="local-test-only", base_url=str(server.make_url("")), timeout=0.5
+        ) as client:
+            result = await client.convert(
+                file_url="https://example.invalid/local.pdf",
+                max_polls=1,
+                poll_interval=0,
+            )
+    assert result.markdown == "full result"
+    assert counts["polls"] == 2
+    assert [type(e) for e in retry_errors] == [DatalabTimeoutError]
+
+
 @asynccontextmanager
 async def _signed_download_server(first_download):
     """Serve a signed result whose first download fails as first_download says."""

@@ -162,7 +162,18 @@ Published-agent execution is in open beta; the API may change. Processor design 
 
 - Send a local file with `file_path`, or a URL or a `datalab://file-...` reference with `file_url`. When you set `processing_location`, send the document as `file_url`.
 - Processing methods poll until the result is ready. The first 8 seconds poll every 0.3 seconds. Set `max_polls` and `poll_interval` to change the limit (default: 300 polls, 1 second apart). Use `stream_response_to` to write a large result straight to disk. It returns a `FileResult` with the status, `output_path` and, when the poll response sends them, `request_id`, `page_count`, `parse_quality_score`, `versions`, `runtime` and `cost_breakdown`.
-- The SDK retries a submission that gets HTTP 429 or 503, and polls or result downloads that get 408, 429, 5xx or a connection error, including one that happens while a result streams. It waits for the `Retry-After` header when the API sends one.
+- The SDK retries a submission that gets HTTP 429 or 503, and polls or result downloads that get 408, 429, 5xx or a connection error, including one that happens while a result streams. It tries each request at most 10 times, and waits for the `Retry-After` header when the API sends one. `timeout` applies to each request, including the whole download of a result. A finished result that times out while it downloads from a signed `result_url`, or streams with `stream_response_to`, is not retried.
+- Timeouts raise `DatalabTimeoutError`. `DatalabPollingTimeoutError` means the polling budget ran out and the request is still running; `DatalabTransferTimeoutError` means the request finished but its result timed out while it downloaded, so raise `timeout` before you fetch it again. An error that a document-processing method raises after the API accepted the request has `request_id` and `check_url`. Pass `check_url` to `get_result()` to fetch the result without submitting the document again. For `run_pipeline()`, `request_id` holds the execution ID for `get_pipeline_execution()`.
+
+  ```python
+  from datalab_sdk import DatalabClient, DatalabPollingTimeoutError
+
+  client = DatalabClient()
+  try:
+      result = client.convert("big.pdf", max_polls=60)
+  except DatalabPollingTimeoutError as e:
+      result = client.get_result(e.check_url, max_polls=600)
+  ```
 - API errors raise `DatalabAPIError` (with `status_code` and `response_data`) or one of its subclasses: `DatalabAuthenticationError` (401, 403), `DatalabPaymentRequiredError` (402), `DatalabNotFoundError` (404), `DatalabRateLimitError` (429) and `DatalabServerError` (5xx). Invalid arguments raise `DatalabValidationError`, which is also a `ValueError`.
 
 With SDK 0.9.0, `upload_files(paths, max_concurrency=5)` streams

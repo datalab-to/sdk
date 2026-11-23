@@ -15,6 +15,8 @@ from .exceptions import (
     DatalabRateLimitError,
     DatalabServerError,
     DatalabTimeoutError,
+    DatalabTransferTimeoutError,
+    DatalabPollingTimeoutError,
     DatalabFileError,
     DatalabValidationError,
 )
@@ -86,6 +88,8 @@ __all__ = [
     "DatalabRateLimitError",
     "DatalabServerError",
     "DatalabTimeoutError",
+    "DatalabTransferTimeoutError",
+    "DatalabPollingTimeoutError",
     "DatalabFileError",
     "DatalabValidationError",
     "ConversionResult",
