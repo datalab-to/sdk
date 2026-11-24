@@ -6,7 +6,9 @@ The flow (server side: /api/auth/device/code, /app/device, /api/auth/device/toke
 3. Poll until the server returns a new API key, then save it to the config file.
 
 The key is saved to $XDG_CONFIG_HOME/datalab/config.json (default ~/.config/datalab/config.json)
-with mode 0600. DATALAB_API_KEY in the environment always wins over the saved key.
+with mode 0600, together with the host it was issued for. resolve_api_key() picks the key that the
+SDK and the CLI send: an explicit key, then DATALAB_API_KEY, then the saved key, and the saved key
+only to the host it was saved for.
 """
 
 from __future__ import annotations
@@ -19,7 +21,8 @@ import urllib.error
 import urllib.request
 import webbrowser
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, NamedTuple, Optional
+from urllib.parse import urlsplit
 
 from datalab_sdk.exceptions import DatalabAPIError
 from datalab_sdk.settings import settings
@@ -32,11 +35,92 @@ def config_path() -> Path:
     return Path(base) / "datalab" / "config.json"
 
 
-def load_saved_api_key() -> Optional[str]:
+def _load_config() -> dict:
     try:
-        return json.loads(config_path().read_text()).get("api_key") or None
+        config = json.loads(config_path().read_text())
     except (OSError, ValueError):
+        return {}
+    return config if isinstance(config, dict) else {}
+
+
+def load_saved_api_key() -> Optional[str]:
+    """Return the saved key, whatever host it is for. Use resolve_api_key() to send one."""
+    return _load_config().get("api_key") or None
+
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+class _Origin(NamedTuple):
+    """The scheme, host and port of a URL, with the default port filled in."""
+
+    scheme: str
+    host: str
+    port: Optional[int]
+
+    def __str__(self) -> str:
+        """A URL without any user name, password, path or query."""
+        host = f"[{self.host}]" if ":" in self.host else self.host
+        default = _DEFAULT_PORTS.get(self.scheme)
+        return f"{self.scheme}://{host}" + (
+            "" if self.port == default else f":{self.port}"
+        )
+
+
+def _origin(url: str) -> Optional[_Origin]:
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port
+    except (AttributeError, ValueError):
         return None
+    scheme = parts.scheme.lower()
+    if not scheme or not parts.hostname:
+        return None
+    return _Origin(scheme, parts.hostname.lower(), port or _DEFAULT_PORTS.get(scheme))
+
+
+def resolve_api_key(api_key: Optional[str], base_url: str) -> str:
+    """Return the API key to send to base_url. Raises DatalabAPIError when there is none.
+
+    The order is an explicit key, then DATALAB_API_KEY, then the key saved by
+    `datalab login`. The saved key is used only when base_url has the same
+    origin (scheme, host and port) as the host it was saved for, so it is never
+    sent to another server. An empty or blank DATALAB_API_KEY counts as unset.
+    Whitespace around a key, such as a newline from a .env file, is removed.
+
+    This chooses the key for base_url only. Requests that base_url's server
+    sends the client on to, such as check URLs and redirects, use the same
+    key: that server already has it.
+    """
+    if api_key is not None:
+        if not api_key.strip():
+            raise DatalabAPIError("The API key passed is empty.")
+        return api_key.strip()
+    env_key = (settings.DATALAB_API_KEY or "").strip()
+    if env_key:
+        return env_key
+    config = _load_config()
+    saved_key = config.get("api_key")
+    saved_host = config.get("host")
+    saved_origin = _origin(saved_host) if isinstance(saved_host, str) else None
+    target_origin = _origin(base_url)
+    if saved_key and saved_origin is not None and saved_origin == target_origin:
+        return saved_key
+    if saved_key:
+        target = str(target_origin) if target_origin else None
+        login = (
+            f"datalab login --host {target}" if target else "datalab login --host <url>"
+        )
+        raise DatalabAPIError(
+            f"No API key for {target or 'this base_url'}. The key saved by "
+            f"`datalab login` is for {saved_origin or 'an unknown host'}, "
+            f"and is only sent to the same scheme, host and port. Run `{login}`, "
+            "set DATALAB_API_KEY, or pass an API key."
+        )
+    raise DatalabAPIError(
+        "No API key. Run `datalab login`, set DATALAB_API_KEY, or pass an API key. "
+        f"Get a free API key at {KEYS_PAGE}"
+    )
 
 
 def save_api_key(api_key: str, host: str, team_name: Optional[str] = None) -> Path:

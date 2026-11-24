@@ -3,6 +3,67 @@
 The newest release is at the top. Each export to this repository uses the
 top section as its commit message.
 
+## 0.14.0
+
+Behavior changes:
+
+- The CLI exits with status 1 when any file fails, and `compare run --wait`
+  exits with status 1 when the comparison or any of its files fails. Before,
+  both exited 0, so scripts and CI couldn't tell. The summary names the
+  output directory only when a file was saved, says `No output was saved.`
+  when none was, and a run that saves nothing leaves no empty output
+  directory.
+- The key saved by `datalab login` is only sent to the host it was saved
+  for: the same scheme, host and port. A client or CLI command with another
+  `base_url`, including `https://datalab.to` for a key saved for
+  `https://www.datalab.to`, no longer uses it, and the error names the saved
+  host and `datalab login --host`. Before, the client sent the saved key to
+  any `base_url`.
+- An empty `api_key` (or `--api_key ""`) raises an error instead of being
+  sent. An empty or blank `DATALAB_API_KEY` counts as unset, and whitespace
+  around a key, such as a newline from a `.env` file, is removed.
+- The CLI saves results to `./output/` when `--output_dir` is not given,
+  instead of the working directory. Scripts that read results from the
+  working directory, such as `./report/report.md` after
+  `datalab convert report.pdf`, now find them at `./output/report/report.md`.
+  Pass `--output_dir .` to keep the old location. The CLI prints the full
+  output path when a run starts and in its summary.
+- The CLI's output folders mirror the input directory: `a/report.pdf`
+  saves to `<output_dir>/a/report/report.md`. Before, every input saved to
+  `<output_dir>/<stem>/`, so `a/report.pdf` and `b/report.pdf` overwrote
+  each other. With the same `--output_dir`, a single file keeps its old
+  path.
+
+Fixed:
+
+- `import datalab_sdk` no longer raises a `DeprecationWarning` with
+  tenacity 9.2 or later, so it works under
+  `python -W error::DeprecationWarning`. Retries keep the same backoff.
+- An error from the sync `DatalabClient` is no longer chained to
+  `RuntimeError: There is no current event loop`. This happened whenever no
+  event loop was set: in every script on Python 3.14, and on earlier
+  versions in a worker thread or after an earlier `asyncio.run()`.
+- The sync `DatalabClient` works under `-W error::DeprecationWarning` on
+  Python 3.12 and 3.13. Before, every call failed with "There is no current
+  event loop".
+- A CLI directory scan skips folders that the CLI saved results to: each
+  has a `.datalab-output` file. Before, a second run in the same folder
+  processed and billed the first run's HTML and images as new inputs.
+  Results saved by 0.13.0 and earlier have no such file, so move or delete
+  them before you scan a folder that holds them.
+- The CLI checks every output folder before it submits anything. It stops
+  when two inputs would save to the same folder (such as `report.pdf` and
+  `report.docx` side by side, or names that differ only in case on a file
+  system that ignores case), when one input's folder would be inside
+  another's (such as `report.pdf` next to a `report/` folder of documents),
+  when a folder already exists and is not a CLI output folder, or when a
+  folder holds another input's results from an earlier run. The error for
+  inputs with the same name suggests `--extensions` to process one type.
+- Every `datalab` CLI command uses the key saved by `datalab login`. Before,
+  `convert`, `create-document`, `compare` and the other processing commands
+  asked for `--api_key` or `DATALAB_API_KEY`. The SDK and the CLI now pick a
+  key the same way: `api_key`, then `DATALAB_API_KEY`, then the saved key.
+
 ## 0.13.0
 
 New:

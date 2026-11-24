@@ -18,6 +18,7 @@ ASYNC_RETURN_VALUE = [
         "output_path": "/tmp/output/test1.txt",
         "error": None,
         "page_count": 2,
+        "saved": True,
     },
     {
         "success": True,
@@ -25,6 +26,7 @@ ASYNC_RETURN_VALUE = [
         "output_path": "/tmp/output/test2.txt",
         "error": None,
         "page_count": 1,
+        "saved": True,
     },
 ]
 
@@ -105,14 +107,20 @@ class TestConvertCommand:
         runner = CliRunner()
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp_file:
             try:
-                # Clear environment variable
-                with patch.dict(os.environ, {}, clear=True):
+                # No environment key, and no saved key from `datalab login`
+                with (
+                    tempfile.TemporaryDirectory() as config_home,
+                    patch.dict(
+                        os.environ, {"XDG_CONFIG_HOME": config_home}, clear=True
+                    ),
+                    patch.object(settings, "DATALAB_API_KEY", None),
+                ):
                     result = runner.invoke(
                         cli, ["convert", tmp_file.name, "--output_dir", "/tmp/output"]
                     )
 
                     assert result.exit_code == 1
-                    assert "You must either pass in an api key" in result.output
+                    assert "No API key" in result.output
 
             finally:
                 os.unlink(tmp_file.name)

@@ -28,6 +28,8 @@ from datalab_sdk.models import (
     InputConfig,
     ComparisonVariant,
 )
+from datalab_sdk._output_layout import OUTPUT_MARKER, OutputLayout
+from datalab_sdk.auth import resolve_api_key
 from datalab_sdk.exceptions import DatalabError
 from datalab_sdk.settings import settings
 import dataclasses
@@ -83,7 +85,12 @@ def common_options(func):
     """Common options for all commands"""
     func = click.option("--api_key", required=False, help="Datalab API key")(func)
     func = click.option(
-        "--output_dir", "-o", required=False, type=click.Path(), help="Output directory"
+        "--output_dir",
+        "-o",
+        required=False,
+        type=click.Path(),
+        help="Output directory (default: ./output). Each input saves to its "
+        "own folder, such as a/report/ for a/report.pdf.",
     )(func)
     func = click.option(
         "--max_pages", type=int, help="Maximum number of pages to process"
@@ -186,24 +193,39 @@ def convert_extra_options(func):
     return func
 
 
+# The output root when --output_dir is not given, under the working directory.
+DEFAULT_OUTPUT_DIR = "output"
+
+
 def find_files_in_directory(
     directory: Path, extensions: Optional[List[str]] = None
 ) -> List[Path]:
-    """Find all supported files in a directory"""
+    """Find all supported files in a directory.
+
+    The scan skips folders that the CLI saved output to (they hold
+    OUTPUT_MARKER), so a later run doesn't process an earlier run's output.
+    """
     if extensions is None:
         extensions = SUPPORTED_EXTENSIONS
 
     files = []
-    for file_path in directory.rglob("*"):
-        if file_path.is_file() and file_path.suffix.lower() in extensions:
-            files.append(file_path)
+    for dirpath, dirnames, filenames in os.walk(directory):
+        current = Path(dirpath)
+        if OUTPUT_MARKER in filenames:
+            dirnames[:] = []
+            continue
+        dirnames.sort()
+        for name in sorted(filenames):
+            file_path = current / name
+            if file_path.suffix.lower() in extensions and file_path.is_file():
+                files.append(file_path)
 
     return files
 
 
 async def process_files_async(
     files: List[Path],
-    output_dir: Path,
+    layout: OutputLayout,
     method: str,
     options: Optional[ProcessingOptions] = None,
     max_concurrent: int = 5,
@@ -212,7 +234,8 @@ async def process_files_async(
     max_polls: int = 300,
     poll_interval: int = 1,
 ) -> List[dict]:
-    """Process files asynchronously"""
+    """Process files asynchronously. Each file saves to its folder in `layout`,
+    which the caller has entered."""
     semaphore = asyncio.Semaphore(max_concurrent)
 
     async def call_api(client, file_path, output_path):
@@ -241,13 +264,10 @@ async def process_files_async(
 
     async def process_single_file(file_path: Path) -> dict:
         async with semaphore:
+            output_path = layout.output_path(file_path)
+            # The folder can hold an earlier run's results: only new writes count.
+            before = layout.snapshot(file_path)
             try:
-                # Create output path
-                relative_path = file_path.name
-                output_path = (
-                    output_dir / Path(relative_path).stem / Path(relative_path).stem
-                )
-
                 async with AsyncDatalabClient(
                     api_key=api_key, base_url=base_url
                 ) as client:
@@ -259,6 +279,7 @@ async def process_files_async(
                     "success": result.success,
                     "error": result.error,
                     "page_count": result.page_count,
+                    "saved": layout.wrote_output(file_path, before),
                 }
             except Exception as e:
                 return {
@@ -267,6 +288,8 @@ async def process_files_async(
                     "success": False,
                     "error": str(e),
                     "page_count": None,
+                    # A save can fail after writing some of the results.
+                    "saved": layout.wrote_output(file_path, before),
                 }
 
     # Process all files concurrently with progress bar
@@ -287,13 +310,11 @@ async def process_files_async(
 
 
 def setup_output_directory(output_dir: Optional[str]) -> Path:
-    """Setup and return output directory"""
+    """Return the output directory. Each input's folder is created under it
+    before its request is submitted, so a run that saves nothing makes nothing."""
     if output_dir is None:
-        output_dir = os.getcwd()
-
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-    return output_dir
+        output_dir = DEFAULT_OUTPUT_DIR
+    return Path(output_dir)
 
 
 def parse_extensions(extensions: Optional[str]) -> Optional[List[str]]:
@@ -320,9 +341,14 @@ def get_files_to_process(
         return find_files_in_directory(path, file_extensions)
 
 
-def show_results(results: List[dict], operation: str, output_dir: Path):
-    """Display processing results"""
+def show_results(results: List[dict], operation: str, output_dir: Path) -> int:
+    """Print a summary of the results, and return the number of failed files.
+
+    The summary names the output folder only when this run wrote a result to
+    it, which a failed file can do when its save fails partway.
+    """
     successful = sum(1 for r in results if r["success"])
+    saved = any(r["saved"] for r in results)
     failed = len(results) - successful
 
     click.echo(f"\n{operation} Summary:")
@@ -336,7 +362,11 @@ def show_results(results: List[dict], operation: str, output_dir: Path):
             if not result["success"]:
                 click.echo(f"      - {result['file_path']}: {result['error']}")
 
-    click.echo(f"\nOutput saved to: {output_dir}")
+    if saved:
+        click.echo(f"\nOutput saved to: {output_dir.absolute()}")
+    else:
+        click.echo("\nNo output was saved.")
+    return failed
 
 
 def process_documents(
@@ -372,19 +402,10 @@ def process_documents(
     """Unified document processing function"""
     try:
         # Validate inputs
-        if api_key is None:
-            api_key = settings.DATALAB_API_KEY
-
-        if api_key is None:
-            raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
-                "Get a free API key at https://www.datalab.to/app/keys"
-            )
-
         if base_url is None:
             base_url = settings.DATALAB_HOST
+        api_key = resolve_api_key(api_key, base_url)
 
-        output_dir_path = setup_output_directory(output_dir)
         file_extensions = parse_extensions(extensions)
 
         # Get files to process
@@ -394,8 +415,12 @@ def process_documents(
         if not to_process:
             click.echo(f"No supported files found in {path}", err=True)
             sys.exit(1)
+        output_dir_path = setup_output_directory(output_dir)
+        input_root = path if path.is_dir() else path.parent
+        layout = OutputLayout.plan(to_process, input_root, output_dir_path)
 
         click.echo(f"Found {len(to_process)} files to process")
+        click.echo(f"Saving results to: {output_dir_path.absolute()}")
 
         # Create processing options based on method
         if options_override:
@@ -457,19 +482,20 @@ def process_documents(
                 skip_cache=skip_cache,
             )
 
-        results = asyncio.run(
-            process_files_async(
-                to_process,
-                output_dir_path,
-                method,
-                options=options,
-                max_concurrent=max_concurrent,
-                api_key=api_key,
-                base_url=base_url,
-                max_polls=max_polls,
-                poll_interval=poll_interval,
+        with layout:
+            results = asyncio.run(
+                process_files_async(
+                    to_process,
+                    layout,
+                    method,
+                    options=options,
+                    max_concurrent=max_concurrent,
+                    api_key=api_key,
+                    base_url=base_url,
+                    max_polls=max_polls,
+                    poll_interval=poll_interval,
+                )
             )
-        )
 
         # Show results
         operation_names = {
@@ -484,7 +510,9 @@ def process_documents(
             "ocr": "OCR",
         }
         operation = operation_names.get(method, method.title())
-        show_results(results, operation, output_dir_path)
+        failed = show_results(results, operation, output_dir_path)
+        if failed:
+            sys.exit(1)
 
     except DatalabError as e:
         click.echo(f"Error: {e}", err=True)
@@ -1036,7 +1064,12 @@ def form_fields(
 @webhook_option
 @click.option("--api_key", required=False, help="Datalab API key")
 @click.option(
-    "--output_dir", "-o", required=False, type=click.Path(), help="Output directory"
+    "--output_dir",
+    "-o",
+    required=False,
+    type=click.Path(),
+    help="Output directory (default: ./output). Each input saves to its "
+    "own folder, such as a/report/ for a/report.pdf.",
 )
 @click.option(
     "--extensions", help="Comma-separated list of file extensions (for directories)"
@@ -1118,15 +1151,6 @@ def create_document(
 ):
     """Create a DOCX document from markdown"""
     try:
-        if api_key is None:
-            api_key = settings.DATALAB_API_KEY
-
-        if api_key is None:
-            raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
-                "Get a free API key at https://www.datalab.to/app/keys"
-            )
-
         # Check if markdown_input is a file path
         md_path = Path(markdown_input)
         if md_path.exists() and md_path.is_file():
@@ -1157,17 +1181,6 @@ def create_document(
 # deprecated 0.10.0 name of the same commands.
 
 _LEGACY_EVAL_META = "datalab_legacy_eval"
-
-
-def _compare_client(api_key: Optional[str], base_url: str) -> DatalabClient:
-    if api_key is None:
-        api_key = settings.DATALAB_API_KEY
-    if api_key is None:
-        raise DatalabError(
-            "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
-            "Get a free API key at https://www.datalab.to/app/keys"
-        )
-    return DatalabClient(api_key=api_key, base_url=base_url)
 
 
 def _legacy_eval() -> bool:
@@ -1210,6 +1223,9 @@ def _print_comparison_summary(comparison) -> None:
             f"  {variant.name}: share={share} decided={variant.decided} won={variant.won} "
             f"rate={rate} speed={speed}"
         )
+    for file in comparison.files or []:
+        if file.comparison_error:
+            click.echo(f"  {file.file_name}: {file.comparison_error}")
 
 
 compare_option_api_key = click.option(
@@ -1304,7 +1320,7 @@ def compare_run(
                 for v in data
             ]
 
-        client = _compare_client(api_key, base_url)
+        client = DatalabClient(api_key=api_key, base_url=base_url)
         file_ids = None
         if paths:
             uploaded = client.upload_files(list(paths))
@@ -1327,6 +1343,19 @@ def compare_run(
                 _echo_json(comparison)
             else:
                 _print_comparison_summary(comparison)
+            failed_files = [
+                f for f in comparison.files or [] if f.comparison == "failed"
+            ]
+            if comparison.status == "failed":
+                click.echo(f"Comparison {comparison.comparison_id} failed.", err=True)
+                sys.exit(1)
+            if failed_files:
+                click.echo(
+                    f"Comparison {comparison.comparison_id}: {len(failed_files)} of "
+                    f"{len(comparison.files)} files failed.",
+                    err=True,
+                )
+                sys.exit(1)
         elif json_output:
             _echo_json(comparison)
         else:
@@ -1349,7 +1378,7 @@ def compare_get(
 ):
     """[Open beta] Get a comparison's status and each variant's result."""
     try:
-        client = _compare_client(api_key, base_url)
+        client = DatalabClient(api_key=api_key, base_url=base_url)
         comparison = client.get_comparison(comparison_id)
         if json_output:
             _echo_json(comparison)
@@ -1379,7 +1408,7 @@ def compare_list(
 ):
     """[Open beta] List the team's comparisons, newest first."""
     try:
-        client = _compare_client(api_key, base_url)
+        client = DatalabClient(api_key=api_key, base_url=base_url)
         result = client.list_comparisons(
             pipeline_id=pipeline_id,
             collection_id=collection_id,
@@ -1414,7 +1443,7 @@ def compare_differences(
 ):
     """[Open beta] Show where a comparison's variants read one document differently."""
     try:
-        client = _compare_client(api_key, base_url)
+        client = DatalabClient(api_key=api_key, base_url=base_url)
         result = client.get_comparison_differences(comparison_id, file_id)
         if json_output:
             _echo_json(result)
@@ -1466,15 +1495,6 @@ def create_workflow(
     """[Deprecated: the API removed workflows] Create a new workflow"""
     _echo_workflows_removed()
     try:
-        if api_key is None:
-            api_key = settings.DATALAB_API_KEY
-
-        if api_key is None:
-            raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
-                "Get a free API key at https://www.datalab.to/app/keys"
-            )
-
         # Parse steps from JSON string or file
         steps_path = Path(steps)
         if steps_path.exists():
@@ -1520,15 +1540,6 @@ def get_workflow(workflow_id: int, api_key: Optional[str], base_url: str):
     """[Deprecated: the API removed workflows] Get a workflow by ID"""
     _echo_workflows_removed()
     try:
-        if api_key is None:
-            api_key = settings.DATALAB_API_KEY
-
-        if api_key is None:
-            raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
-                "Get a free API key at https://www.datalab.to/app/keys"
-            )
-
         client = DatalabClient(api_key=api_key, base_url=base_url)
         workflow = client.get_workflow(workflow_id)
 
@@ -1558,15 +1569,6 @@ def get_step_types(api_key: Optional[str], base_url: str):
     """[Deprecated: the API removed workflows] Get all available workflow step types"""
     _echo_workflows_removed()
     try:
-        if api_key is None:
-            api_key = settings.DATALAB_API_KEY
-
-        if api_key is None:
-            raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
-                "Get a free API key at https://www.datalab.to/app/keys"
-            )
-
         client = DatalabClient(api_key=api_key, base_url=base_url)
         response = client.get_step_types()
 
@@ -1601,15 +1603,6 @@ def list_workflows(api_key: Optional[str], base_url: str):
     """[Deprecated: the API removed workflows] List all workflows for your team"""
     _echo_workflows_removed()
     try:
-        if api_key is None:
-            api_key = settings.DATALAB_API_KEY
-
-        if api_key is None:
-            raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
-                "Get a free API key at https://www.datalab.to/app/keys"
-            )
-
         client = DatalabClient(api_key=api_key, base_url=base_url)
         workflows = client.list_workflows()
 
@@ -1649,15 +1642,6 @@ def execute_workflow(
     """[Deprecated: the API removed workflows] Trigger a workflow execution"""
     _echo_workflows_removed()
     try:
-        if api_key is None:
-            api_key = settings.DATALAB_API_KEY
-
-        if api_key is None:
-            raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
-                "Get a free API key at https://www.datalab.to/app/keys"
-            )
-
         # Parse input_config from JSON string or file
         input_path = Path(input_config)
         if input_path.exists():
@@ -1737,15 +1721,6 @@ def get_execution_status(
     """[Deprecated: the API removed workflows] Get the status of a workflow execution"""
     _echo_workflows_removed()
     try:
-        if api_key is None:
-            api_key = settings.DATALAB_API_KEY
-
-        if api_key is None:
-            raise DatalabError(
-                "You must either pass in an api key via --api_key or set the DATALAB_API_KEY env variable. "
-                "Get a free API key at https://www.datalab.to/app/keys"
-            )
-
         client = DatalabClient(api_key=api_key, base_url=base_url)
         execution = client.get_execution_status(
             execution_id=execution_id,

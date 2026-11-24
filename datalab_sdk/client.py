@@ -23,11 +23,13 @@ from tenacity import (
     retry_if_exception_type,
     retry_if_not_exception_type,
     stop_after_attempt,
-    wait_exponential_jitter,
+    wait_exponential,
+    wait_random,
 )
 from pathlib import Path
 from typing import Union, Optional, Dict, Any, Callable, Awaitable
 
+from datalab_sdk.auth import resolve_api_key
 from datalab_sdk.exceptions import (
     DatalabAPIError,
     DatalabError,
@@ -122,7 +124,12 @@ _TERMINAL_PIPELINE_STATUSES = (
 )
 
 _SUBMIT_RETRY_STATUSES = (429, 503)
-_BACKOFF = wait_exponential_jitter(initial=5, max=120)
+# Exponential backoff with jitter: 5, 10, 20... seconds plus up to 1 second,
+# at most 120 in all (_wait_retry_after_or_backoff clamps it).
+# wait_exponential_jitter's `initial` is deprecated in tenacity 9.2, and its
+# replacement isn't in 8.2.3, the oldest tenacity the SDK supports.
+_BACKOFF = wait_exponential(multiplier=5, max=120) + wait_random(0, 1)
+_MAX_BACKOFF_SECONDS = 120.0
 _MAX_RETRY_AFTER_SECONDS = 120.0
 # The first FAST_POLL_SECONDS of a result poll check every FAST_POLL_INTERVAL
 # seconds, then every poll_interval.
@@ -141,7 +148,7 @@ def _wait_retry_after_or_backoff(retry_state) -> float:
     retry_after = getattr(exc, "retry_after", None)
     if retry_after is not None:
         return min(max(retry_after, 0.0), _MAX_RETRY_AFTER_SECONDS)
-    return _BACKOFF(retry_state)
+    return min(_BACKOFF(retry_state), _MAX_BACKOFF_SECONDS)
 
 
 def _is_retryable_submit_error(e: BaseException) -> bool:
@@ -397,24 +404,14 @@ class AsyncDatalabClient:
         Initialize the async Datalab client
 
         Args:
-            api_key: Your Datalab API key
+            api_key: Your Datalab API key. Defaults to DATALAB_API_KEY, then to
+                the key saved by `datalab login` when base_url is the host it
+                was saved for.
             base_url: Base URL for the API (default: https://www.datalab.to)
             timeout: Default timeout for requests in seconds
         """
-        if api_key is None:
-            api_key = settings.DATALAB_API_KEY
-        if api_key is None:
-            from datalab_sdk.auth import load_saved_api_key
-
-            api_key = load_saved_api_key()
-        if api_key is None:
-            raise DatalabAPIError(
-                "No API key. Run `datalab login`, set DATALAB_API_KEY, or pass api_key. "
-                "Get a free API key at https://www.datalab.to/app/keys"
-            )
-
-        self.api_key = api_key
         self.base_url = base_url.rstrip("/")
+        self.api_key = resolve_api_key(api_key, self.base_url)
         self.timeout = timeout
         self._session = None
 
@@ -3505,7 +3502,9 @@ class DatalabClient:
         Initialize the Datalab client
 
         Args:
-            api_key: Your Datalab API key
+            api_key: Your Datalab API key. Defaults to DATALAB_API_KEY, then to
+                the key saved by `datalab login` when base_url is the host it
+                was saved for.
             base_url: Base URL for the API (default: https://www.datalab.to)
             timeout: Default timeout for requests in seconds
         """
@@ -3515,9 +3514,16 @@ class DatalabClient:
         """Run async coroutine in sync context"""
         try:
             loop = asyncio.get_event_loop()
-        except RuntimeError:
-            # Only a missing loop should select asyncio.run. RuntimeError from
-            # the operation itself must propagate without rerunning it.
+        except (RuntimeError, DeprecationWarning):
+            # No current loop: the normal case in a script on Python 3.14. On
+            # 3.12 and 3.13 the same case warns, which raises under
+            # -W error::DeprecationWarning. An installed idle loop is reused,
+            # because asyncio.run() would unset it for the caller.
+            loop = None
+        # Run outside the except block, so an error from the operation isn't
+        # chained to the RuntimeError above. RuntimeError from the operation
+        # itself propagates without rerunning it.
+        if loop is None or loop.is_closed():
             return asyncio.run(self._async_wrapper(coro))
         if loop.is_running():
             coro.close()
@@ -3525,8 +3531,6 @@ class DatalabClient:
                 "DatalabClient cannot run inside an active event loop; "
                 "use AsyncDatalabClient instead."
             )
-        if loop.is_closed():
-            return asyncio.run(self._async_wrapper(coro))
         return loop.run_until_complete(self._async_wrapper(coro))
 
     async def _async_wrapper(self, coro):

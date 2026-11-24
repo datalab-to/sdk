@@ -23,6 +23,7 @@ RESULTS = [
         "output_path": "/tmp/out/a",
         "error": None,
         "page_count": 1,
+        "saved": True,
     }
 ]
 
