@@ -2736,7 +2736,8 @@ class AsyncDatalabClient:
         name: str = "",
     ) -> PipelineConfig:
         """
-        Name and promote a pipeline to saved status
+        Name a pipeline and mark it saved. This doesn't publish a version:
+        call create_pipeline_version() for that.
 
         Args:
             pipeline_id: Pipeline ID string
@@ -2812,11 +2813,15 @@ class AsyncDatalabClient:
         version: Optional[int] = None,
     ) -> PipelineConfig:
         """
-        Discard draft changes and revert to a published version
+        Replace the draft's steps with a published version's steps
+
+        Without version, the draft goes back to the active version. With
+        version=N, it gets version N's steps and N becomes the active version,
+        which runs that don't pin a version use.
 
         Args:
             pipeline_id: Pipeline ID string
-            version: Version to revert to (default: active published version)
+            version: Version to load and make active (default: the active version)
         """
         payload: Dict[str, Any] = {}
         if version is not None:
@@ -4355,7 +4360,12 @@ class DatalabClient:
         pipeline_id: str,
         version: Optional[int] = None,
     ) -> PipelineConfig:
-        """Discard draft and revert to a published version (sync version)"""
+        """Replace the draft's steps with a published version's steps (sync version)
+
+        Without version, the draft goes back to the active version. With
+        version=N, it gets version N's steps and N becomes the active version,
+        which runs that don't pin a version use.
+        """
         return self._run_async(
             self._async_client.discard_pipeline_draft(
                 pipeline_id=pipeline_id,
