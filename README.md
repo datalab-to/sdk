@@ -14,7 +14,7 @@ pip install datalab-python-sdk
 
 ### Authentication
 
-[Sign up](https://www.datalab.to/?utm_source=gh-sdk), then get your API key from [https://www.datalab.to/app/keys](https://www.datalab.to/app/keys):
+[Sign up](https://www.datalab.to/auth/sign_up?utm_source=gh-sdk), then get your API key from [https://www.datalab.to/app/keys](https://www.datalab.to/app/keys):
 
 ```bash
 export DATALAB_API_KEY="your_api_key_here"
